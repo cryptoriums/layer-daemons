@@ -1,0 +1,35 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Build artifacts
+build/
+
+# IDE
+.idea/
+.vscode/
+.cursor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+secrets.yaml
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+
+# Go
+vendor/
+go.work
+go.work.sum
