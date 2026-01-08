@@ -8,7 +8,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tellor-io/layer-daemons"
+	daemons "github.com/tellor-io/layer-daemons"
 	"github.com/tellor-io/layer-daemons/appconfig"
 	"github.com/tellor-io/layer-daemons/configs"
 	customquery "github.com/tellor-io/layer-daemons/custom_query"
@@ -74,8 +74,10 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-var prometheusPort int
-var testMode bool
+var (
+	prometheusPort int
+	testMode       bool
+)
 
 func main() {
 	daemonflags.AddDaemonFlagsToCmd(rootCmd)
@@ -117,12 +119,10 @@ func init() {
 	// We'll validate them in the Run function instead
 
 	// Try to load .env from current directory, or parent directory if not found
+	// .env file is optional, so we ignore errors - allows daemon to run without .env
 	if err := godotenv.Load(); err != nil {
 		// Try parent directory (for when running from daemons/ subdirectory)
-		if err := godotenv.Load("../.env"); err != nil {
-			// .env file is optional, so we don't panic if it's not found
-			// This allows the daemon to run without .env if environment variables are set another way
-		}
+		_ = godotenv.Load("../.env")
 	}
 
 	if err := viper.BindPFlags(rootCmd.Flags()); err != nil {

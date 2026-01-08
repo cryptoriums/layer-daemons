@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"cosmossdk.io/log"
 	"github.com/tellor-io/layer-daemons/configs"
 	"github.com/tellor-io/layer-daemons/constants"
 	customquery "github.com/tellor-io/layer-daemons/custom_query"
@@ -17,6 +16,8 @@ import (
 	"github.com/tellor-io/layer-daemons/pricefeed/client/types"
 	pricefeedservertypes "github.com/tellor-io/layer-daemons/server/types/pricefeed"
 	daemontypes "github.com/tellor-io/layer-daemons/types"
+
+	"cosmossdk.io/log"
 )
 
 // exchangeTestResult represents the result of testing an exchange for a market
@@ -96,7 +97,7 @@ func testMarketParam(
 
 	// Test each configured exchange
 	for _, exchangeConfigJsonItem := range exchangeConfigJson.Exchanges {
-		exchangeId := types.ExchangeId(exchangeConfigJsonItem.ExchangeName)
+		exchangeId := exchangeConfigJsonItem.ExchangeName
 
 		// Check if exchange details exist
 		exchangeDetails, exists := constants.StaticExchangeDetails[exchangeId]
@@ -240,7 +241,6 @@ func queryExchangeForMarket(
 		requestHandler,
 		marketExponents,
 	)
-
 	if err != nil {
 		return exchangeTestResult{
 			Success: false,

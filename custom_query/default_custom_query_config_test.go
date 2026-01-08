@@ -141,7 +141,7 @@ func TestMergeCustomQueryConfig(t *testing.T) {
 			configPath := filepath.Join(testDir, localDir, fileName)
 			tomlBytes, err := toml.Marshal(tc.initialConfig)
 			require.NoError(t, err)
-			err = os.WriteFile(configPath, tomlBytes, 0o644)
+			err = os.WriteFile(configPath, tomlBytes, 0o600)
 			require.NoError(t, err)
 
 			// Perform merge

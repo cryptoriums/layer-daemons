@@ -175,11 +175,10 @@ func (c *Client) Start(
 		if !viper.IsSet("price-guard-update-on-blocked") {
 			return fmt.Errorf("price-guard-enabled is true but price-guard-update-on-blocked is not set")
 		}
-	} else {
-		// If price guard is disabled, error if any other price guard flags are set
-		if viper.IsSet("price-guard-threshold") || viper.IsSet("price-guard-max-age") || viper.IsSet("price-guard-update-on-blocked") {
-			return fmt.Errorf("price-guard flags are set but price-guard-enabled is false")
-		}
+	} else
+	// If price guard is disabled, error if any other price guard flags are set
+	if viper.IsSet("price-guard-threshold") || viper.IsSet("price-guard-max-age") || viper.IsSet("price-guard-update-on-blocked") {
+		return fmt.Errorf("price-guard flags are set but price-guard-enabled is false")
 	}
 
 	c.PriceGuard = NewPriceGuard(priceGuardThreshold, priceGuardMaxAge, priceGuardEnabled, updateOnBlocked, c.logger)

@@ -1,4 +1,3 @@
-//nolint:staticcheck // SA1019: grpc.DialContext is deprecated, use NewClient instead.
 package types
 
 import (

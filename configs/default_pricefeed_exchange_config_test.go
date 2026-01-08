@@ -245,9 +245,9 @@ func TestMergePricefeedExchangeConfig(t *testing.T) {
 	tests := map[string]struct {
 		// setup
 		initialExchanges []types.ExchangeQueryConfig
-		expectedAdded     int
-		expectError       bool
-		errorContains     string
+		expectedAdded    int
+		expectError      bool
+		errorContains    string
 	}{
 		"merge adds missing exchanges": {
 			initialExchanges: []types.ExchangeQueryConfig{
@@ -283,7 +283,7 @@ func TestMergePricefeedExchangeConfig(t *testing.T) {
 		},
 		"merge handles empty file": {
 			initialExchanges: []types.ExchangeQueryConfig{},
-			expectedAdded:     len(constants.StaticExchangeQueryConfig),
+			expectedAdded:    len(constants.StaticExchangeQueryConfig),
 		},
 	}
 
@@ -303,7 +303,7 @@ func TestMergePricefeedExchangeConfig(t *testing.T) {
 			// Marshal to TOML
 			tomlBytes, err := toml.Marshal(initialConfig)
 			require.NoError(t, err)
-			err = os.WriteFile(configPath, tomlBytes, 0o644)
+			err = os.WriteFile(configPath, tomlBytes, 0o600)
 			require.NoError(t, err)
 
 			// Perform merge

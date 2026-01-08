@@ -158,7 +158,7 @@ func createTestRPCServer(t *testing.T, totalAssets, totalSupply *big.Int) *httpt
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]interface{}
-		json.NewDecoder(r.Body).Decode(&req)
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
 
 		if req["method"] == "eth_call" {
 			methodID := ""
@@ -182,11 +182,11 @@ func createTestRPCServer(t *testing.T, totalAssets, totalSupply *big.Int) *httpt
 				result = "0x"
 			}
 
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			require.NoError(t, json.NewEncoder(w).Encode(map[string]interface{}{
 				"jsonrpc": "2.0",
 				"id":      req["id"],
 				"result":  result,
-			})
+			}))
 		}
 	}))
 }
@@ -194,9 +194,12 @@ func createTestRPCServer(t *testing.T, totalAssets, totalSupply *big.Int) *httpt
 func createCoinGeckoServer(price float64) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if price > 0 {
-			json.NewEncoder(w).Encode(map[string]map[string]float64{
+			err := json.NewEncoder(w).Encode(map[string]map[string]float64{
 				"frax": {"usd": price},
 			})
+			if err != nil {
+				panic(err)
+			}
 		}
 	}))
 }
@@ -204,9 +207,12 @@ func createCoinGeckoServer(price float64) *httptest.Server {
 func createCurveServer(price float64) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if price > 0 {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			err := json.NewEncoder(w).Encode(map[string]interface{}{
 				"data": map[string]float64{"usd_price": price},
 			})
+			if err != nil {
+				panic(err)
+			}
 		}
 	}))
 }
@@ -214,11 +220,14 @@ func createCurveServer(price float64) *httptest.Server {
 func createCoinPaprikaServer(price float64) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if price > 0 {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			err := json.NewEncoder(w).Encode(map[string]interface{}{
 				"quotes": map[string]interface{}{
 					"USD": map[string]float64{"price": price},
 				},
 			})
+			if err != nil {
+				panic(err)
+			}
 		}
 	}))
 }

@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"cosmossdk.io/log"
-
 	"github.com/tellor-io/layer/utils"
+
+	"cosmossdk.io/log"
 )
 
 type PriceGuard struct {

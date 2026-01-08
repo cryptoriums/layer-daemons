@@ -83,7 +83,7 @@ func TestMergeMarketParamsConfig(t *testing.T) {
 			// Marshal to TOML
 			tomlBytes, err := toml.Marshal(initialConfig)
 			require.NoError(t, err)
-			err = os.WriteFile(configPath, tomlBytes, 0o644)
+			err = os.WriteFile(configPath, tomlBytes, 0o600)
 			require.NoError(t, err)
 
 			// Perform merge
