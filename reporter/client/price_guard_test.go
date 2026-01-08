@@ -128,7 +128,7 @@ func TestPriceGuard_OverOneHundredPercentDeviation(t *testing.T) {
 	}
 
 	// 300% increase - exceeds 250% threshold
-	shouldSubmit, reason = pg.ShouldSubmit(queryData, 400.0)
+	shouldSubmit, _ = pg.ShouldSubmit(queryData, 400.0)
 	if shouldSubmit {
 		t.Errorf("300%% change should be blocked with 250%% threshold")
 	}
