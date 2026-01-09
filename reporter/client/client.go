@@ -11,13 +11,13 @@ import (
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/spf13/viper"
 	globalfeetypes "github.com/strangelove-ventures/globalfee/x/globalfee/types"
-	customquery "github.com/tellor-io/layer-daemons/custom_query"
-	"github.com/tellor-io/layer-daemons/flags"
-	pricefeedtypes "github.com/tellor-io/layer-daemons/pricefeed/client/types"
-	pricefeedservertypes "github.com/tellor-io/layer-daemons/server/types/pricefeed"
-	tokenbridgetypes "github.com/tellor-io/layer-daemons/server/types/token_bridge"
-	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
-	daemontypes "github.com/tellor-io/layer-daemons/types"
+	customquery "github.com/tellor-io/layer/daemons/custom_query"
+	"github.com/tellor-io/layer/daemons/flags"
+	pricefeedtypes "github.com/tellor-io/layer/daemons/pricefeed/client/types"
+	pricefeedservertypes "github.com/tellor-io/layer/daemons/server/types/pricefeed"
+	tokenbridgetypes "github.com/tellor-io/layer/daemons/server/types/token_bridge"
+	tokenbridgetipstypes "github.com/tellor-io/layer/daemons/server/types/token_bridge_tips"
+	daemontypes "github.com/tellor-io/layer/daemons/types"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
 	reportertypes "github.com/tellor-io/layer/x/reporter/types"
 
@@ -31,7 +31,7 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 )
 
-const defaultGas = uint64(300000)
+const defaultGas = uint64(240000)
 
 var (
 	commitedIds   = make(map[uint64]bool)
@@ -175,10 +175,11 @@ func (c *Client) Start(
 		if !viper.IsSet("price-guard-update-on-blocked") {
 			return fmt.Errorf("price-guard-enabled is true but price-guard-update-on-blocked is not set")
 		}
-	} else
-	// If price guard is disabled, error if any other price guard flags are set
-	if viper.IsSet("price-guard-threshold") || viper.IsSet("price-guard-max-age") || viper.IsSet("price-guard-update-on-blocked") {
-		return fmt.Errorf("price-guard flags are set but price-guard-enabled is false")
+	} else {
+		// If price guard is disabled, error if any other price guard flags are set
+		if viper.IsSet("price-guard-threshold") || viper.IsSet("price-guard-max-age") || viper.IsSet("price-guard-update-on-blocked") {
+			return fmt.Errorf("price-guard flags are set but price-guard-enabled is false")
+		}
 	}
 
 	c.PriceGuard = NewPriceGuard(priceGuardThreshold, priceGuardMaxAge, priceGuardEnabled, updateOnBlocked, c.logger)
