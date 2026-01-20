@@ -10,7 +10,7 @@ import (
 
 	cmttypes "github.com/cometbft/cometbft/rpc/core/types"
 	globalfeetypes "github.com/strangelove-ventures/globalfee/x/globalfee/types"
-	"github.com/tellor-io/layer/daemons/lib/metrics"
+	"github.com/tellor-io/layer-daemons/lib/metrics"
 
 	"cosmossdk.io/math"
 

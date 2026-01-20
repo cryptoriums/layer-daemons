@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/tellor-io/layer/daemons/lib/metrics"
-	"github.com/tellor-io/layer/utils"
+	"github.com/tellor-io/layer-daemons/lib/metrics"
+	"github.com/tellor-io/layer-daemons/utils"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
 
 	"github.com/cosmos/cosmos-sdk/telemetry"
