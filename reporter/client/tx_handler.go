@@ -22,8 +22,10 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 )
 
-var gasEstimateMap = make(map[reflect.Type]uint64)
-var BRIDGE_REPORT_TYPE = reflect.TypeOf("bridge_deposit_report")
+var (
+	gasEstimateMap     = make(map[reflect.Type]uint64)
+	BRIDGE_REPORT_TYPE = reflect.TypeOf("bridge_deposit_report")
+)
 
 func newFactory(clientCtx client.Context) tx.Factory {
 	return tx.Factory{}.
