@@ -88,10 +88,28 @@ func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositRe
 }
 
 func (c *Client) start(ctx context.Context) {
+	// Wait for contract to be initialized before starting the main loop
+	c.logger.Info("Waiting for contract to be initialized...")
+	for {
+		initialized, err := c.QueryHasContractBeenInitialized()
+		if err != nil {
+			c.logger.Error("Failed to check initialization status, retrying...", "error", err)
+			time.Sleep(2 * time.Minute)
+			continue
+		}
+		if initialized {
+			c.logger.Info("Contract is initialized, starting deposit monitoring")
+			break
+		}
+		c.logger.Info("Contract not yet initialized, waiting...")
+		time.Sleep(2 * time.Minute)
+	}
+
 	if err := c.InitializeDeposits(); err != nil {
 		c.logger.Error("Failed to initialize deposits", "error", err)
 		return
 	}
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
