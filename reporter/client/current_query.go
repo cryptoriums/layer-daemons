@@ -19,6 +19,10 @@ func (c *Client) CurrentQuery(ctx context.Context) ([]byte, *oracletypes.QueryMe
 		return nil, nil, fmt.Errorf("error parsing query id from response: %w", err)
 	}
 
-	c.logger.Info("ReporterDaemon", "current query id in cycle list", hex.EncodeToString(utils.QueryIDFromData(querydata)))
+	queryID := hex.EncodeToString(utils.QueryIDFromData(querydata))
+	if queryID != c.lastLoggedCycleQueryID {
+		c.logger.Info("ReporterDaemon", "current query id in cycle list", queryID)
+		c.lastLoggedCycleQueryID = queryID
+	}
 	return querydata, response.QueryMeta, nil
 }

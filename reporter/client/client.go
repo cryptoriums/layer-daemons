@@ -71,9 +71,10 @@ type Client struct {
 	accAddr   sdk.AccAddress
 	minGasFee string
 	// logger is the logger for the daemon.
-	logger     log.Logger
-	txChan     chan TxChannelInfo
-	PriceGuard *PriceGuard
+	logger                 log.Logger
+	txChan                 chan TxChannelInfo
+	PriceGuard             *PriceGuard
+	lastLoggedCycleQueryID string
 }
 
 // GetUniqueUnorderedTimeout generates a unique timeout timestamp for unordered transactions.
