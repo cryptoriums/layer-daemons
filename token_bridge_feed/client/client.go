@@ -88,6 +88,12 @@ func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositRe
 }
 
 func (c *Client) start(ctx context.Context) {
+	// Initialize clients and contracts first (needed to check initialization status)
+	if err := c.initializeClientsAndContracts(); err != nil {
+		c.logger.Error("Failed to initialize clients and contracts", "error", err)
+		return
+	}
+
 	// Wait for contract to be initialized before starting the main loop
 	c.logger.Info("Waiting for contract to be initialized...")
 	for {
@@ -277,7 +283,9 @@ func (c *Client) getEthRpcUrls() (string, string, error) {
 	return strings.TrimSpace(primaryUrl), strings.TrimSpace(fallbackUrl), nil
 }
 
-func (c *Client) InitializeDeposits() error {
+// initializeClientsAndContracts sets up the Ethereum clients and contract instances
+// This must be called before checking if the contract is initialized
+func (c *Client) initializeClientsAndContracts() error {
 	primaryUrl, fallbackUrl, err := c.getEthRpcUrls()
 	if err != nil {
 		return fmt.Errorf("failed to get ETH RPC urls: %w", err)
@@ -309,6 +317,17 @@ func (c *Client) InitializeDeposits() error {
 	c.fallbackBridgeContract, err = tokenbridge.NewTokenBridgeV2(contractAddress, c.fallbackEthClient)
 	if err != nil {
 		return fmt.Errorf("failed to instantiate fallback TokenBridge contract: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Client) InitializeDeposits() error {
+	// Ensure clients and contracts are initialized (in case they weren't already)
+	if c.primaryBridgeContract == nil || c.fallbackBridgeContract == nil {
+		if err := c.initializeClientsAndContracts(); err != nil {
+			return fmt.Errorf("failed to initialize clients and contracts: %w", err)
+		}
 	}
 
 	latestDepositId, err := c.QueryCurrentDepositId()
