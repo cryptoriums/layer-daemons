@@ -405,7 +405,7 @@ func (c *Client) CheckForFinality(blockHeight *big.Int) (bool, error) {
 
 func (c *Client) EncodeQueryData(depositReceipt DepositReceipt) ([]byte, error) {
 	// encode query data
-	queryTypeString := "TRBBridge"
+	queryTypeString := "TRBBridgeV2"
 	toLayerBool := true
 	// prepare encoding
 	StringType, err := abi.NewType("string", "", nil)
