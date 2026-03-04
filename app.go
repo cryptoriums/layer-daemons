@@ -8,21 +8,21 @@ import (
 	"time"
 
 	"github.com/spf13/cast"
-	"github.com/tellor-io/layer/app"
-	"github.com/tellor-io/layer/daemons/configs"
-	"github.com/tellor-io/layer/daemons/constants"
-	customquery "github.com/tellor-io/layer/daemons/custom_query"
-	daemonflags "github.com/tellor-io/layer/daemons/flags"
-	metricsclient "github.com/tellor-io/layer/daemons/metrics/client"
-	pricefeedclient "github.com/tellor-io/layer/daemons/pricefeed/client"
-	reporterclient "github.com/tellor-io/layer/daemons/reporter/client"
-	daemonserver "github.com/tellor-io/layer/daemons/server"
-	daemonservertypes "github.com/tellor-io/layer/daemons/server/types"
-	pricefeedtypes "github.com/tellor-io/layer/daemons/server/types/pricefeed"
-	tokenbridgetypes "github.com/tellor-io/layer/daemons/server/types/token_bridge"
-	tokenbridgetipstypes "github.com/tellor-io/layer/daemons/server/types/token_bridge_tips"
-	tokenbridgeclient "github.com/tellor-io/layer/daemons/token_bridge_feed/client"
-	daemontypes "github.com/tellor-io/layer/daemons/types"
+	"github.com/tellor-io/layer-daemons/appconfig"
+	"github.com/tellor-io/layer-daemons/configs"
+	"github.com/tellor-io/layer-daemons/constants"
+	customquery "github.com/tellor-io/layer-daemons/custom_query"
+	daemonflags "github.com/tellor-io/layer-daemons/flags"
+	metricsclient "github.com/tellor-io/layer-daemons/metrics/client"
+	pricefeedclient "github.com/tellor-io/layer-daemons/pricefeed/client"
+	reporterclient "github.com/tellor-io/layer-daemons/reporter/client"
+	daemonserver "github.com/tellor-io/layer-daemons/server"
+	daemonservertypes "github.com/tellor-io/layer-daemons/server/types"
+	pricefeedtypes "github.com/tellor-io/layer-daemons/server/types/pricefeed"
+	tokenbridgetypes "github.com/tellor-io/layer-daemons/server/types/token_bridge"
+	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
+	tokenbridgeclient "github.com/tellor-io/layer-daemons/token_bridge_feed/client"
+	daemontypes "github.com/tellor-io/layer-daemons/types"
 	"google.golang.org/grpc"
 
 	"cosmossdk.io/log"
@@ -62,7 +62,7 @@ func NewApp(
 	tempDir, err := os.MkdirTemp("", "tellorapp")
 	if err != nil {
 		// Fallback to default if temp dir creation fails
-		tempDir = app.DefaultNodeHome
+		tempDir = appconfig.DefaultNodeHome
 	} else {
 		appInstance.tempDir = tempDir // Track for cleanup
 	}
@@ -257,7 +257,7 @@ func (a *App) Shutdown() {
 	}
 
 	// Clean up temporary directory if one was created
-	if a.tempDir != "" && a.tempDir != app.DefaultNodeHome {
+	if a.tempDir != "" && a.tempDir != appconfig.DefaultNodeHome {
 		if err := os.RemoveAll(a.tempDir); err != nil {
 			a.logger.Error("Failed to remove temporary directory", "path", a.tempDir, "error", err)
 		} else {

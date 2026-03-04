@@ -14,7 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/shirou/gopsutil/v3/process"
 	"github.com/spf13/viper"
-	tokenbridgetipstypes "github.com/tellor-io/layer/daemons/server/types/token_bridge_tips"
+	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
 	reportertypes "github.com/tellor-io/layer/x/reporter/types"
 

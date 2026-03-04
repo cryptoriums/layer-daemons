@@ -15,9 +15,9 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
-	tokenbridgetypes "github.com/tellor-io/layer/daemons/server/types/token_bridge"
-	tokenbridgetipstypes "github.com/tellor-io/layer/daemons/server/types/token_bridge_tips"
-	tokenbridge "github.com/tellor-io/layer/daemons/token_bridge_feed/abi"
+	tokenbridgetypes "github.com/tellor-io/layer-daemons/server/types/token_bridge"
+	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
+	tokenbridge "github.com/tellor-io/layer-daemons/token_bridge_feed/abi"
 
 	"cosmossdk.io/log"
 )

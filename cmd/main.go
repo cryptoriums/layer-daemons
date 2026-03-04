@@ -11,11 +11,11 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
-	"github.com/tellor-io/layer/app"
-	"github.com/tellor-io/layer/daemons"
-	"github.com/tellor-io/layer/daemons/configs"
-	customquery "github.com/tellor-io/layer/daemons/custom_query"
-	daemonflags "github.com/tellor-io/layer/daemons/flags"
+	daemons "github.com/tellor-io/layer-daemons"
+	"github.com/tellor-io/layer-daemons/appconfig"
+	"github.com/tellor-io/layer-daemons/configs"
+	customquery "github.com/tellor-io/layer-daemons/custom_query"
+	daemonflags "github.com/tellor-io/layer-daemons/flags"
 
 	"cosmossdk.io/log"
 
@@ -100,7 +100,7 @@ func main() {
 }
 
 func init() {
-	rootCmd.Flags().String(flags.FlagHome, app.DefaultNodeHome, "Node home directory")
+	rootCmd.Flags().String(flags.FlagHome, appconfig.DefaultNodeHome, "Node home directory")
 	rootCmd.Flags().String(flags.FlagFrom, "", "Name of the key to use")
 	rootCmd.Flags().String(flags.FlagGRPC, "0.0.0.0:9090", "Address to listen on")
 	rootCmd.Flags().String(flags.FlagChainID, "layer", "Chain ID")
