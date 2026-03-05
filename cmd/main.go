@@ -90,8 +90,10 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-var prometheusPort int
-var testMode bool
+var (
+	prometheusPort int
+	testMode       bool
+)
 
 func main() {
 	daemonflags.AddDaemonFlagsToCmd(rootCmd)
@@ -132,13 +134,10 @@ func init() {
 	// Note: --from, --grpc, --chain-id, and --node are only required in normal mode, not test mode
 	// We'll validate them in the Run function instead
 
-	// Try to load .env from current directory, or parent directory if not found
+	// Try to load .env from current directory, or parent directory if not found.
+	// .env file is optional — allows the daemon to run without one if env vars are set another way.
 	if err := godotenv.Load(); err != nil {
-		// Try parent directory (for when running from daemons/ subdirectory)
-		if err := godotenv.Load("../.env"); err != nil {
-			// .env file is optional, so we don't panic if it's not found
-			// This allows the daemon to run without .env if environment variables are set another way
-		}
+		_ = godotenv.Load("../.env")
 	}
 
 	if err := viper.BindPFlags(rootCmd.Flags()); err != nil {

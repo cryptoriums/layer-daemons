@@ -20,6 +20,7 @@ import (
 	daemontypes "github.com/tellor-io/layer-daemons/types"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
 	reportertypes "github.com/tellor-io/layer/x/reporter/types"
+	"google.golang.org/grpc"
 
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
@@ -29,7 +30,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	"google.golang.org/grpc"
 )
 
 const defaultGas = uint64(300000)
@@ -180,11 +180,9 @@ func (c *Client) Start(
 		if !viper.IsSet("price-guard-update-on-blocked") {
 			return fmt.Errorf("price-guard-enabled is true but price-guard-update-on-blocked is not set")
 		}
-	} else {
+	} else if viper.IsSet("price-guard-threshold") || viper.IsSet("price-guard-max-age") || viper.IsSet("price-guard-update-on-blocked") {
 		// If price guard is disabled, error if any other price guard flags are set
-		if viper.IsSet("price-guard-threshold") || viper.IsSet("price-guard-max-age") || viper.IsSet("price-guard-update-on-blocked") {
-			return fmt.Errorf("price-guard flags are set but price-guard-enabled is false")
-		}
+		return fmt.Errorf("price-guard flags are set but price-guard-enabled is false")
 	}
 
 	c.PriceGuard = NewPriceGuard(priceGuardThreshold, priceGuardMaxAge, priceGuardEnabled, updateOnBlocked, c.logger)
@@ -282,7 +280,7 @@ func StartReporterDaemonTaskLoop(
 	for !reporterCreated {
 		select {
 		case <-ctx.Done():
-			client.logger.Info("StartReporterDaemonTaskLoop: context cancelled during reporter startup")
+			client.logger.Debug("StartReporterDaemonTaskLoop: context canceled during reporter startup")
 			return
 		default:
 		}
@@ -305,7 +303,7 @@ func StartReporterDaemonTaskLoop(
 
 	select {
 	case <-ctx.Done():
-		client.logger.Info("StartReporterDaemonTaskLoop: context cancelled before starting monitors")
+		client.logger.Debug("StartReporterDaemonTaskLoop: context canceled before starting monitors")
 		return
 	case <-time.After(5 * time.Second):
 	}
@@ -402,14 +400,14 @@ func isConnectionError(err error) bool {
 		strings.Contains(errStr, "Unavailable")
 }
 
-// trySend attempts to send to txChan but returns false if the context is cancelled.
+// trySend attempts to send to txChan but returns false if the context is canceled.
 // This prevents panics from sending on a closed channel during shutdown.
 func (c *Client) trySend(ctx context.Context, info TxChannelInfo) bool {
 	select {
 	case c.txChan <- info:
 		return true
 	case <-ctx.Done():
-		c.logger.Info("trySend: context cancelled, dropping tx")
+		c.logger.Debug("trySend: context canceled, dropping tx")
 		return false
 	}
 }
@@ -417,11 +415,10 @@ func (c *Client) trySend(ctx context.Context, info TxChannelInfo) bool {
 // Stop stops the reporter client gracefully
 func (c *Client) Stop() {
 	c.stopOnce.Do(func() {
-		c.logger.Info("ReporterClient: initiating shutdown")
+		c.logger.Debug("ReporterClient: initiating shutdown")
 
 		// Close the transaction channel to signal BroadcastTxMsgToChain to stop
 		close(c.txChan)
-		c.logger.Info("ReporterClient: transaction channel closed")
 
 		// Wait for all goroutines to finish
 		c.wg.Wait()
@@ -433,11 +430,9 @@ func (c *Client) Stop() {
 		if c.grpcConn != nil && c.grpcClient != nil {
 			if err := c.grpcClient.CloseConnection(c.grpcConn); err != nil {
 				c.logger.Error("Failed to close gRPC connection", "error", err)
-			} else {
-				c.logger.Info("ReporterClient: gRPC connection closed")
 			}
 		}
 
-		c.logger.Info("ReporterClient: shutdown complete")
+		c.logger.Info("ReporterClient: stopped")
 	})
 }

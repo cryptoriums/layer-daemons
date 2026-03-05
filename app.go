@@ -121,8 +121,8 @@ func NewApp(
 		// Wait for either context cancellation or server completion
 		select {
 		case <-ctx.Done():
-			// Context cancelled, stop the server gracefully
-			logger.Info("Server: context cancelled, stopping server")
+			// Context canceled, stop the server gracefully
+			logger.Debug("Server: context canceled, stopping")
 			server.Stop()
 			// Wait for server to actually stop
 			<-done
@@ -208,31 +208,23 @@ func NewApp(
 
 // Shutdown gracefully shuts down all daemon services
 func (a *App) Shutdown() {
-	a.logger.Info("Initiating graceful shutdown...")
+	a.logger.Info("Shutting down...")
 
 	// Stop all clients
 	if a.PriceFeedClient != nil {
-		a.logger.Info("Stopping pricefeed client...")
 		a.PriceFeedClient.Stop()
-		a.logger.Info("Pricefeed client stopped")
 	}
 
 	if a.TokenBridgeClient != nil {
-		a.logger.Info("Stopping token bridge client...")
 		a.TokenBridgeClient.Stop()
-		a.logger.Info("Token bridge client stopped")
 	}
 
 	if a.ReporterClient != nil {
-		a.logger.Info("Stopping reporter client...")
 		a.ReporterClient.Stop()
-		a.logger.Info("Reporter client stopped")
 	}
 
 	if a.DaemonHealthMonitor != nil {
-		a.logger.Info("Stopping health monitor...")
 		a.DaemonHealthMonitor.Stop()
-		a.logger.Info("Health monitor stopped")
 	}
 
 	// Wait for all goroutines to finish with timeout
@@ -253,12 +245,10 @@ func (a *App) Shutdown() {
 	if a.tempDir != "" && a.tempDir != appconfig.DefaultNodeHome {
 		if err := os.RemoveAll(a.tempDir); err != nil {
 			a.logger.Error("Failed to remove temporary directory", "path", a.tempDir, "error", err)
-		} else {
-			a.logger.Info("Temporary directory cleaned up", "path", a.tempDir)
 		}
 	}
 
-	a.logger.Info("App shutdown complete")
+	a.logger.Info("Shutdown complete")
 }
 
 // RegisterDaemonWithHealthMonitor registers a daemon service with the update monitor, which will commence monitoring

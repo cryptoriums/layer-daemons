@@ -19,6 +19,7 @@ import (
 	reportertypes "github.com/tellor-io/layer/x/reporter/types"
 
 	"cosmossdk.io/math"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -39,7 +40,7 @@ func (c *Client) MonitorCyclelistQuery(ctx context.Context, wg *sync.WaitGroup) 
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Info("MonitorCyclelistQuery: context cancelled, exiting")
+			c.logger.Debug("MonitorCyclelistQuery: context canceled, exiting")
 			return
 		case <-ticker.C:
 			queryCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
@@ -92,7 +93,7 @@ func (c *Client) MonitorTokenBridgeReports(ctx context.Context, wg *sync.WaitGro
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Info("MonitorTokenBridgeReports: context cancelled, exiting")
+			c.logger.Debug("MonitorTokenBridgeReports: context canceled, exiting")
 			return
 		case <-ticker.C:
 			txCtx, cancel := context.WithTimeout(ctx, defaultTxTimeout)
@@ -127,7 +128,7 @@ func (c *Client) MonitorForTippedQueries(ctx context.Context, wg *sync.WaitGroup
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Info("MonitorForTippedQueries: context cancelled, exiting")
+			c.logger.Debug("MonitorForTippedQueries: context canceled, exiting")
 			return
 		case <-ticker.C:
 			queryCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
@@ -216,7 +217,7 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Info("WithdrawAndStakeEarnedRewardsPeriodically: context cancelled, exiting")
+			c.logger.Debug("WithdrawAndStakeEarnedRewardsPeriodically: context canceled, exiting")
 			return
 		case <-ticker.C:
 			valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
@@ -262,7 +263,7 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Info("AutoUnbondStakePeriodically: context cancelled, exiting")
+			c.logger.Debug("AutoUnbondStakePeriodically: context canceled, exiting")
 			return
 		case <-ticker.C:
 			c.logger.Info("Trying to unbond stake")

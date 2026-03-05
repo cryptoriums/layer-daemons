@@ -6,12 +6,13 @@ import (
 	"testing"
 	"time"
 
-	"cosmossdk.io/log"
 	"github.com/stretchr/testify/require"
 	"github.com/tellor-io/layer-daemons/flags"
+
+	"cosmossdk.io/log"
 )
 
-// TestTrySend_PreventsPanicOnClosedChannel tests that trySend with a cancelled
+// TestTrySend_PreventsPanicOnClosedChannel tests that trySend with a canceled
 // context exits safely.
 func TestTrySend_PreventsPanicOnClosedChannel(t *testing.T) {
 	c := NewClient(log.NewNopLogger(), "0.001uloya")
@@ -21,7 +22,7 @@ func TestTrySend_PreventsPanicOnClosedChannel(t *testing.T) {
 
 	// trySend must not panic
 	ok := c.trySend(ctx, TxChannelInfo{isBridge: false})
-	require.False(t, ok, "trySend should return false when context is cancelled")
+	require.False(t, ok, "trySend should return false when context is canceled")
 }
 
 // TestStopThenBroadcastExitsCleanly tests the shutdown sequence:
@@ -73,13 +74,13 @@ func TestStartReporterDaemonTaskLoop_ExitsOnCancelledContext(t *testing.T) {
 	case <-done:
 
 	case <-time.After(3 * time.Second):
-		t.Fatal("StartReporterDaemonTaskLoop did not exit with cancelled context — Bug #3 regression")
+		t.Fatal("StartReporterDaemonTaskLoop did not exit with canceled context — Bug #3 regression")
 	}
 }
 
 // TestConcurrentTrySendDuringShutdown simulates the real shutdown race:
 // multiple monitor goroutines try to send to txChan while the context is
-// being cancelled. None should panic.
+// being canceled. None should panic.
 func TestConcurrentTrySendDuringShutdown(t *testing.T) {
 	c := NewClient(log.NewNopLogger(), "0.001loya")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -99,7 +100,7 @@ func TestConcurrentTrySendDuringShutdown(t *testing.T) {
 		go func() {
 			defer senderWg.Done()
 			// Each goroutine tries to send,some will succeed, some will
-			// hit the cancelled context. None should panic.
+			// hit the canceled context. None should panic.
 			c.trySend(ctx, TxChannelInfo{isBridge: false})
 		}()
 	}

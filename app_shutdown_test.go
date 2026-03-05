@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"cosmossdk.io/log"
 	"github.com/stretchr/testify/require"
+
+	"cosmossdk.io/log"
 )
 
 // TestAppShutdown_WaitsForGoroutinesThenReturns verifies the core contract of

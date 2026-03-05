@@ -158,11 +158,11 @@ func (c *Client) BroadcastTxMsgToChain(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			c.logger.Info("BroadcastTxMsgToChain: context cancelled, exiting")
+			c.logger.Debug("BroadcastTxMsgToChain: context canceled, exiting")
 			return
 		case obj, ok := <-c.txChan:
 			if !ok {
-				c.logger.Info("BroadcastTxMsgToChain: channel closed, exiting")
+				c.logger.Debug("BroadcastTxMsgToChain: channel closed, exiting")
 				return
 			}
 			// submit transaction in goroutine with proper tracking

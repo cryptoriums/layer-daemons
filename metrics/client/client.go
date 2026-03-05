@@ -34,7 +34,7 @@ func Start(
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("MetricsClient: context cancelled, exiting")
+			logger.Debug("MetricsClient: context canceled, exiting")
 			return
 		case <-ticker.C:
 			RunMetricsDaemonTaskLoop(

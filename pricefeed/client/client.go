@@ -93,11 +93,10 @@ func (c *Client) newTickerWithStop(intervalMs int) (*time.Ticker, <-chan bool) {
 // Stop stops the daemon and all running subtasks. This method is synchronized by the daemonStartup WaitGroup.
 func (c *Client) Stop() {
 	c.stopDaemon.Do(func() {
-		c.logger.Info("PriceFeedClient: initiating shutdown")
+		c.logger.Debug("PriceFeedClient: initiating shutdown")
 		c.daemonStartup.Wait()
 
 		// Send a signal to all tickers and stop channels to stop all running subtasks managed by the client.
-		c.logger.Info("PriceFeedClient: stopping all tickers and channels")
 		for _, stop := range c.stops {
 			close(stop)
 		}
@@ -105,9 +104,8 @@ func (c *Client) Stop() {
 			ticker.Stop()
 		}
 
-		c.logger.Info("PriceFeedClient: waiting for all subtasks to complete")
 		c.runningSubtasksWaitGroup.Wait()
-		c.logger.Info("PriceFeedClient: shutdown complete")
+		c.logger.Info("PriceFeedClient: stopped")
 	})
 }
 
