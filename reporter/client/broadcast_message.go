@@ -32,7 +32,7 @@ func (c *Client) GenerateDepositMessages(ctx context.Context) error {
 	}
 
 	telemetry.IncrCounterWithLabels([]string{"daemon_bridge_deposit", "found"}, 1, []metrics.Label{{Name: "chain_id", Value: c.cosmosCtx.ChainID}})
-	c.txChan <- TxChannelInfo{Msg: msg, isBridge: true, NumRetries: bridgeDepositMaxRetries, QueryMetaId: 0}
+	c.trySend(ctx, TxChannelInfo{Msg: msg, isBridge: true, NumRetries: bridgeDepositMaxRetries, QueryMetaId: 0})
 
 	return nil
 }
@@ -85,12 +85,12 @@ func (c *Client) GenerateAndBroadcastSpotPriceReport(ctx context.Context, qd []b
 		Value:     encodedValue,
 	}
 
-	c.txChan <- TxChannelInfo{
+	c.trySend(ctx, TxChannelInfo{
 		Msg:         msg,
 		isBridge:    false,
 		NumRetries:  0,
 		QueryMetaId: querymeta.Id,
-	}
+	})
 
 	// Mark as committed immediately to prevent duplicate processing
 	mutex.Lock()
@@ -121,7 +121,7 @@ func (c *Client) HandleBridgeDepositTxInChannel(ctx context.Context, data TxChan
 
 		// For unordered transactions, we don't need to handle concurrent transaction limits
 
-		c.txChan <- data
+		c.trySend(ctx, data)
 
 		return
 	}

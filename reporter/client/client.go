@@ -280,6 +280,12 @@ func StartReporterDaemonTaskLoop(
 	reporterCreated := false
 	// Check if the reporter is created
 	for !reporterCreated {
+		select {
+		case <-ctx.Done():
+			client.logger.Info("StartReporterDaemonTaskLoop: context cancelled during reporter startup")
+			return
+		default:
+		}
 		reporterCreated = client.checkReporter(ctx)
 		if reporterCreated {
 			client.logger.Info("Reporter exists, setting gas price")
@@ -297,7 +303,12 @@ func StartReporterDaemonTaskLoop(
 		}
 	}
 
-	time.Sleep(5 * time.Second)
+	select {
+	case <-ctx.Done():
+		client.logger.Info("StartReporterDaemonTaskLoop: context cancelled before starting monitors")
+		return
+	case <-time.After(5 * time.Second):
+	}
 	err := client.WaitForNextBlock(ctx)
 	if err != nil {
 		client.logger.Error("Waiting for next block", "error", err)
@@ -389,6 +400,18 @@ func isConnectionError(err error) bool {
 		strings.Contains(errStr, "connection closed") ||
 		strings.Contains(errStr, "transport: Error while dialing") ||
 		strings.Contains(errStr, "Unavailable")
+}
+
+// trySend attempts to send to txChan but returns false if the context is cancelled.
+// This prevents panics from sending on a closed channel during shutdown.
+func (c *Client) trySend(ctx context.Context, info TxChannelInfo) bool {
+	select {
+	case c.txChan <- info:
+		return true
+	case <-ctx.Done():
+		c.logger.Info("trySend: context cancelled, dropping tx")
+		return false
+	}
 }
 
 // Stop stops the reporter client gracefully

@@ -152,11 +152,11 @@ func NewApp(
 
 	RegisterDaemonWithHealthMonitor(priceFeedClient, daemonHealthMonitor, maxDaemonUnhealthyDuration, logger)
 
+	reporterClient := reporterclient.NewClient(logger, cast.ToString(appOpts.Get("minimum-gas-prices")))
+	appInstance.ReporterClient = reporterClient
 	appInstance.wg.Add(1)
 	go func() {
 		defer appInstance.wg.Done()
-		reporterClient := reporterclient.NewClient(logger, cast.ToString(appOpts.Get("minimum-gas-prices")))
-		appInstance.ReporterClient = reporterClient
 		if err := reporterClient.Start(
 			// Use cancellable context instead of context.Background
 			ctx,
@@ -233,13 +233,6 @@ func (a *App) Shutdown() {
 		a.logger.Info("Stopping health monitor...")
 		a.DaemonHealthMonitor.Stop()
 		a.logger.Info("Health monitor stopped")
-	}
-
-	// Stop gRPC server
-	if a.Server != nil {
-		a.logger.Info("Stopping gRPC server...")
-		a.Server.Stop()
-		a.logger.Info("gRPC server stopped")
 	}
 
 	// Wait for all goroutines to finish with timeout

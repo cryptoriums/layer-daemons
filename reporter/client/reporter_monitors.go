@@ -229,7 +229,7 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 				SelectorAddress:  c.accAddr.String(),
 				ValidatorAddress: valAddr,
 			}
-			c.txChan <- TxChannelInfo{Msg: withdrawMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0}
+			c.trySend(ctx, TxChannelInfo{Msg: withdrawMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0})
 		}
 	}
 }
@@ -296,7 +296,7 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 				ValidatorAddress: valAddr,
 				Amount:           sdk.NewCoin("loya", unbondAmount),
 			}
-			c.txChan <- TxChannelInfo{Msg: unbondMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0}
+			c.trySend(ctx, TxChannelInfo{Msg: unbondMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0})
 
 		}
 	}
