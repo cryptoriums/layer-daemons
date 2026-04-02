@@ -543,6 +543,10 @@ func (c *Client) QueryDepositDetails(depositId *big.Int) (DepositReceipt, error)
 		}
 	}
 
+	if deposit.Amount.Cmp(big.NewInt(0)) == 0 || deposit.BlockHeight.Cmp(big.NewInt(0)) == 0 {
+		return DepositReceipt{}, fmt.Errorf("deposit details are not available yet. RPC returned zero values")
+	}
+
 	return DepositReceipt{
 		DepositId:   depositId,
 		Sender:      deposit.Sender,
