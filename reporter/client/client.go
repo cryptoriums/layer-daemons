@@ -32,7 +32,7 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 )
 
-const defaultGas = uint64(300000)
+const defaultGas = uint64(240000)
 
 var (
 	commitedIds   = make(map[uint64]bool)
@@ -181,7 +181,6 @@ func (c *Client) Start(
 			return fmt.Errorf("price-guard-enabled is true but price-guard-update-on-blocked is not set")
 		}
 	} else if viper.IsSet("price-guard-threshold") || viper.IsSet("price-guard-max-age") || viper.IsSet("price-guard-update-on-blocked") {
-		// If price guard is disabled, error if any other price guard flags are set
 		return fmt.Errorf("price-guard flags are set but price-guard-enabled is false")
 	}
 
