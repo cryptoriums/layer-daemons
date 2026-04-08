@@ -17,7 +17,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	tokenbridgetypes "github.com/tellor-io/layer-daemons/server/types/token_bridge"
 	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
-	tokenbridge "github.com/tellor-io/layer-daemons/token_bridge_feed/abi"
+	tokenbridge "github.com/tellor-io/layer-daemons/token_bridge_feed/abi/v2"
 
 	"cosmossdk.io/log"
 )
@@ -34,8 +34,8 @@ type Client struct {
 
 	primaryEthClient       *ethclient.Client
 	fallbackEthClient      *ethclient.Client
-	primaryBridgeContract  *tokenbridge.TokenBridge
-	fallbackBridgeContract *tokenbridge.TokenBridge
+	primaryBridgeContract  *tokenbridge.TokenBridgeV2
+	fallbackBridgeContract *tokenbridge.TokenBridgeV2
 }
 
 type DepositReceipt struct {
@@ -88,10 +88,34 @@ func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositRe
 }
 
 func (c *Client) start(ctx context.Context) {
+	// Initialize clients and contracts first (needed to check initialization status)
+	if err := c.initializeClientsAndContracts(); err != nil {
+		c.logger.Error("Failed to initialize clients and contracts", "error", err)
+		return
+	}
+
+	// Wait for contract to be initialized before starting the main loop
+	c.logger.Info("Waiting for contract to be initialized...")
+	for {
+		initialized, err := c.QueryHasContractBeenInitialized()
+		if err != nil {
+			c.logger.Error("Failed to check initialization status, retrying...", "error", err)
+			time.Sleep(2 * time.Minute)
+			continue
+		}
+		if initialized {
+			c.logger.Info("Contract is initialized, starting deposit monitoring")
+			break
+		}
+		c.logger.Info("Contract not yet initialized, waiting...")
+		time.Sleep(2 * time.Minute)
+	}
+
 	if err := c.InitializeDeposits(); err != nil {
 		c.logger.Error("Failed to initialize deposits", "error", err)
 		return
 	}
+
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -259,7 +283,9 @@ func (c *Client) getEthRpcUrls() (string, string, error) {
 	return strings.TrimSpace(primaryUrl), strings.TrimSpace(fallbackUrl), nil
 }
 
-func (c *Client) InitializeDeposits() error {
+// initializeClientsAndContracts sets up the Ethereum clients and contract instances
+// This must be called before checking if the contract is initialized
+func (c *Client) initializeClientsAndContracts() error {
 	primaryUrl, fallbackUrl, err := c.getEthRpcUrls()
 	if err != nil {
 		return fmt.Errorf("failed to get ETH RPC urls: %w", err)
@@ -283,14 +309,25 @@ func (c *Client) InitializeDeposits() error {
 	}
 
 	// Initialize contracts
-	c.primaryBridgeContract, err = tokenbridge.NewTokenBridge(contractAddress, c.primaryEthClient)
+	c.primaryBridgeContract, err = tokenbridge.NewTokenBridgeV2(contractAddress, c.primaryEthClient)
 	if err != nil {
 		return fmt.Errorf("failed to instantiate primary TokenBridge contract: %w", err)
 	}
 
-	c.fallbackBridgeContract, err = tokenbridge.NewTokenBridge(contractAddress, c.fallbackEthClient)
+	c.fallbackBridgeContract, err = tokenbridge.NewTokenBridgeV2(contractAddress, c.fallbackEthClient)
 	if err != nil {
 		return fmt.Errorf("failed to instantiate fallback TokenBridge contract: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Client) InitializeDeposits() error {
+	// Ensure clients and contracts are initialized (in case they weren't already)
+	if c.primaryBridgeContract == nil || c.fallbackBridgeContract == nil {
+		if err := c.initializeClientsAndContracts(); err != nil {
+			return fmt.Errorf("failed to initialize clients and contracts: %w", err)
+		}
 	}
 
 	latestDepositId, err := c.QueryCurrentDepositId()
@@ -387,7 +424,7 @@ func (c *Client) CheckForFinality(blockHeight *big.Int) (bool, error) {
 
 func (c *Client) EncodeQueryData(depositReceipt DepositReceipt) ([]byte, error) {
 	// encode query data
-	queryTypeString := "TRBBridge"
+	queryTypeString := "TRBBridgeV2"
 	toLayerBool := true
 	// prepare encoding
 	StringType, err := abi.NewType("string", "", nil)
@@ -504,12 +541,12 @@ func (c *Client) reconnectEthClient() error {
 	}
 
 	// Reinitialize contracts
-	c.primaryBridgeContract, err = tokenbridge.NewTokenBridge(contractAddress, c.primaryEthClient)
+	c.primaryBridgeContract, err = tokenbridge.NewTokenBridgeV2(contractAddress, c.primaryEthClient)
 	if err != nil {
 		return fmt.Errorf("failed to reinstantiate primary TokenBridge contract: %w", err)
 	}
 
-	c.fallbackBridgeContract, err = tokenbridge.NewTokenBridge(contractAddress, c.fallbackEthClient)
+	c.fallbackBridgeContract, err = tokenbridge.NewTokenBridgeV2(contractAddress, c.fallbackEthClient)
 	if err != nil {
 		return fmt.Errorf("failed to reinstantiate fallback TokenBridge contract: %w", err)
 	}
@@ -529,6 +566,22 @@ func (c *Client) QueryCurrentDepositId() (*big.Int, error) {
 		}
 	}
 	return depositId, nil
+}
+
+func (c *Client) QueryHasContractBeenInitialized() (bool, error) {
+	// try primary first
+	initialized, err := c.primaryBridgeContract.Initialized(nil)
+	if err != nil {
+		c.logger.Error("Failed to query primary contract, trying fallback", "error", err)
+		// try fallback
+		initialized, err = c.fallbackBridgeContract.Initialized(nil)
+	}
+
+	if err != nil {
+		c.logger.Error("Failed to query fallback contract", "error", err)
+		return false, fmt.Errorf("failed to query has contract been initialized from both endpoints: %w", err)
+	}
+	return initialized, nil
 }
 
 func (c *Client) QueryDepositDetails(depositId *big.Int) (DepositReceipt, error) {
