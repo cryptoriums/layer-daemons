@@ -3,6 +3,7 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"runtime"
@@ -15,6 +16,7 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 	"github.com/spf13/viper"
 	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
+	"github.com/tellor-io/layer/utils"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
 	reportertypes "github.com/tellor-io/layer/x/reporter/types"
 
@@ -58,6 +60,8 @@ func (c *Client) MonitorCyclelistQuery(ctx context.Context, wg *sync.WaitGroup) 
 			if bytes.Equal(querydata, prevQueryData) || hasCommited {
 				continue
 			}
+
+			c.logger.Info("ReporterDaemon", "current query id in cycle list", hex.EncodeToString(utils.QueryIDFromData(querydata)))
 
 			// Handle report generation with timeout
 			txCtx, cancel := context.WithTimeout(ctx, defaultTxTimeout)

@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/tellor-io/layer/utils"
@@ -19,6 +18,5 @@ func (c *Client) CurrentQuery(ctx context.Context) ([]byte, *oracletypes.QueryMe
 		return nil, nil, fmt.Errorf("error parsing query id from response: %w", err)
 	}
 
-	c.logger.Info("ReporterDaemon", "current query id in cycle list", hex.EncodeToString(utils.QueryIDFromData(querydata)))
 	return querydata, response.QueryMeta, nil
 }
