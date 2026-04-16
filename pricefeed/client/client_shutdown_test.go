@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
 	daemonflags "github.com/tellor-io/layer-daemons/flags"
 	"github.com/tellor-io/layer-daemons/mocks"
 	"github.com/tellor-io/layer-daemons/pricefeed/client/types"
@@ -26,7 +25,7 @@ func TestStop_CompletesWhenStartFailsBeforeDaemonStartupDone(t *testing.T) {
 		mockGrpcClient              *mocks.GrpcClient
 		exchangeIdToQueryConfig     map[types.ExchangeId]*types.ExchangeQueryConfig
 		exchangeIdToExchangeDetails map[types.ExchangeId]types.ExchangeQueryDetails
-		wantErrContains               string
+		wantErrContains             string
 	}{
 		"tcp_connection_fails": {
 			mockGrpcClient: grpc_util.GenerateMockGrpcClientWithOptionalTcpConnectionErrors(
