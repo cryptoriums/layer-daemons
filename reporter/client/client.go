@@ -110,7 +110,7 @@ func NewClient(logger log.Logger, valGasMin string) *Client {
 				baseIdx: 0,
 			},
 			defaultNonBridgeBucketConfigKey: {
-				levels:  []float64{1.0, 1.25, 2.0},
+				levels:  []float64{1.25, 1.6, 2.0},
 				baseIdx: 0,
 			},
 		}),
