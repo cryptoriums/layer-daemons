@@ -174,7 +174,7 @@ func NewApp(
 		}
 	}()
 
-	tokenBridgeClient := tokenbridgeclient.StartNewClient(ctx, logger, tokenDepositsCache, tokenBridgeTipsCache)
+	tokenBridgeClient := tokenbridgeclient.StartNewClient(ctx, logger, tokenDepositsCache, tokenBridgeTipsCache, chainId)
 	appInstance.TokenBridgeClient = tokenBridgeClient
 
 	// Start the Metrics Daemon.

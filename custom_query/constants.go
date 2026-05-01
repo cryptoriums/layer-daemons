@@ -8,6 +8,12 @@ var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 		Method:      "GET",
 		Timeout:     5000,
 	},
+	"coingeckoPro": {
+		URLTemplate: "https://pro-api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd&x_cg_pro_api_key={api_key}",
+		Method:      "GET",
+		Timeout:     5000,
+		ApiKey:      "${CGPRO_API_KEY}",
+	},
 	"coinpaprika": {
 		URLTemplate: "https://api.coinpaprika.com/v1/tickers/{coin_id}?quotes=USD",
 		Method:      "GET",
@@ -121,7 +127,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "coingecko",
+				EndpointType: "coingeckoPro",
 				ResponsePath: []string{"noble-dollar-usdn", "usd"},
 				Params: map[string]string{
 					"coin_id": "noble-dollar-usdn",
@@ -147,7 +153,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "coingecko",
+				EndpointType: "coingeckoPro",
 				ResponsePath: []string{"susds", "usd"},
 				Params: map[string]string{
 					"coin_id": "susds",
@@ -258,7 +264,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "coingecko",
+				EndpointType: "coingeckoPro",
 				ResponsePath: []string{"lrt-squared", "usd"},
 				Params: map[string]string{
 					"coin_id": "lrt-squared",
