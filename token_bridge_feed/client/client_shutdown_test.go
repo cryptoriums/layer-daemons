@@ -85,9 +85,7 @@ func TestStartNewClient_StopUnblocksWhenEthereumEnvIncomplete(t *testing.T) {
 	}
 }
 
-func TestGetTokenBridgeContractAddress_UsesChainSpecificEnv(t *testing.T) {
-	t.Setenv("TELLOR_1_TOKEN_BRIDGE", "0x6ec401744008f4B018Ed9A36f76e6629799Ee50E")
-
+func TestGetTokenBridgeContractAddress_UsesHardCodedMainnetContract(t *testing.T) {
 	c := newClient(log.NewNopLogger(), tokenbridgetypes.NewDepositReports(), tokenbridgetipstypes.NewDepositTips(), "tellor-1")
 	address, err := c.getTokenBridgeContractAddress()
 
@@ -96,7 +94,7 @@ func TestGetTokenBridgeContractAddress_UsesChainSpecificEnv(t *testing.T) {
 }
 
 func TestGetTokenBridgeContractAddress_UsesFallbackForCustomChain(t *testing.T) {
-	t.Setenv("TOKEN_BRIDGE_CONTRACT", "0x55355157703A44f7516FBB831333317E98944e32")
+	t.Setenv("TOKEN_BRIDGE_TEST_CONTRACT", "0x55355157703A44f7516FBB831333317E98944e32")
 
 	c := newClient(log.NewNopLogger(), tokenbridgetypes.NewDepositReports(), tokenbridgetipstypes.NewDepositTips(), "localnet")
 	address, err := c.getTokenBridgeContractAddress()

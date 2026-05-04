@@ -39,11 +39,11 @@ type Client struct {
 	fallbackBridgeContract *tokenbridge.TokenBridgeV2
 }
 
-const legacyTokenBridgeContractEnv = "TOKEN_BRIDGE_CONTRACT"
+const tokenBridgeTestContractEnv = "TOKEN_BRIDGE_TEST_CONTRACT"
 
-var tokenBridgeContractEnvByChainID = map[string]string{
-	"tellor-1":    "TELLOR_1_TOKEN_BRIDGE",
-	"layertest-5": "LAYERTEST_5_TOKEN_BRIDGE",
+var tokenBridgeContractByChainID = map[string]string{
+	"tellor-1":    "0x6ec401744008f4B018Ed9A36f76e6629799Ee50E",
+	"layertest-5": "0x55355157703A44f7516FBB831333317E98944e32",
 }
 
 type DepositReceipt struct {
@@ -547,26 +547,19 @@ func (c *Client) EncodeReportValue(depositReceipt DepositReceipt) ([]byte, error
 
 func (c *Client) getTokenBridgeContractAddress() (common.Address, error) {
 	chainID := strings.ToLower(strings.TrimSpace(c.chainID))
-	if envVar, ok := tokenBridgeContractEnvByChainID[chainID]; ok {
-		tokenBridgeContractAddress := strings.TrimSpace(os.Getenv(envVar))
-		if tokenBridgeContractAddress == "" {
-			return common.Address{}, fmt.Errorf("%s not set for chain ID %s", envVar, c.chainID)
-		}
-		if !common.IsHexAddress(tokenBridgeContractAddress) {
-			return common.Address{}, fmt.Errorf("%s is not a valid ethereum address", envVar)
-		}
-		c.logger.Info("Using token bridge contract", "chain_id", c.chainID, "env_var", envVar, "address", tokenBridgeContractAddress)
+	if tokenBridgeContractAddress, ok := tokenBridgeContractByChainID[chainID]; ok {
+		c.logger.Info("Using token bridge contract", "chain_id", c.chainID, "address", tokenBridgeContractAddress)
 		return common.HexToAddress(tokenBridgeContractAddress), nil
 	}
 
-	tokenBridgeContractAddress := strings.TrimSpace(os.Getenv(legacyTokenBridgeContractEnv))
+	tokenBridgeContractAddress := strings.TrimSpace(os.Getenv(tokenBridgeTestContractEnv))
 	if tokenBridgeContractAddress == "" {
-		return common.Address{}, fmt.Errorf("unsupported chain ID %q for token bridge contract; set %s for local/custom chains", c.chainID, legacyTokenBridgeContractEnv)
+		return common.Address{}, fmt.Errorf("unsupported chain ID %q for token bridge contract; set %s for local/custom chains", c.chainID, tokenBridgeTestContractEnv)
 	}
 	if !common.IsHexAddress(tokenBridgeContractAddress) {
-		return common.Address{}, fmt.Errorf("%s is not a valid ethereum address", legacyTokenBridgeContractEnv)
+		return common.Address{}, fmt.Errorf("%s is not a valid ethereum address", tokenBridgeTestContractEnv)
 	}
-	c.logger.Info("Using fallback token bridge contract", "chain_id", c.chainID, "env_var", legacyTokenBridgeContractEnv, "address", tokenBridgeContractAddress)
+	c.logger.Info("Using fallback token bridge contract", "chain_id", c.chainID, "env_var", tokenBridgeTestContractEnv, "address", tokenBridgeContractAddress)
 	return common.HexToAddress(tokenBridgeContractAddress), nil
 }
 
