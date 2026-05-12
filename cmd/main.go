@@ -45,11 +45,15 @@ var rootCmd = &cobra.Command{
 
 		// Check if test mode is enabled
 		if testMode {
-			if err := runTestMode(homePath, logger); err != nil {
+			if err := runTestMode(homePath, logger, testQueryID); err != nil {
 				fmt.Printf("Test mode failed: %v\n", err)
 				os.Exit(1)
 			}
 			os.Exit(0)
+		}
+		if testQueryID != "" {
+			fmt.Fprintf(os.Stderr, "Error: --test-query-id requires --test\n")
+			os.Exit(1)
 		}
 
 		// Normal daemon mode - validate required flags
@@ -94,6 +98,7 @@ var rootCmd = &cobra.Command{
 var (
 	prometheusPort int
 	testMode       bool
+	testQueryID    string
 )
 
 func main() {
@@ -123,6 +128,7 @@ func init() {
 
 	// Test mode flag
 	rootCmd.Flags().BoolVar(&testMode, "test", false, "Test mode: verify price feed configurations and calculate medians without starting daemon")
+	rootCmd.Flags().StringVar(&testQueryID, "test-query-id", "", "With --test, only run this custom query id (64-char hex); skips exchange/market tests. Exits non-zero if the query fails.")
 	// Automatic Unbonding flags
 	rootCmd.Flags().Uint32("auto-unbonding-frequency", 0, "Enable automatic unbonding every N days (0 = disabled, 1 - 21 days = valid")
 	rootCmd.Flags().Uint32("auto-unbonding-amount", 0, "Amount of tokens in loya to unbond each unbonding transaction (0 = disabled)")

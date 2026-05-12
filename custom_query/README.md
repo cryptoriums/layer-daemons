@@ -76,6 +76,16 @@ response_path = ["savings-dai", "usd"] # Path to extract the value from JSON res
 
 The example configuration fetches sDAI and Tellor token prices from multiple sources, ensuring data reliability through aggregation.
 
+## Testing a single query (`reporterd`)
+
+From the node home that contains `config/custom_query_config.toml`, run only one custom query (skips standard exchange/market tests):
+
+```bash
+reporterd --home <path-to-home> --test --test-query-id 03731257e35c49e44b267640126358e5decebdd8f18b5e8f229542ec86e318cf
+```
+
+`--test-query-id` requires `--test`. The id must match a `[queries.<id>]` section in `custom_query_config.toml`. The process exits with a non-zero status if that query fails.
+
 ## Adding New Queries
 
 To add a new query:

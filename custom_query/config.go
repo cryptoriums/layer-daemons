@@ -207,7 +207,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 							}
 
 							reader, err := rpcreader.NewReader(url, template.Method, template.Query,
-								processedHeaders, responsePath, template.Timeout)
+								processedHeaders, responsePath, template.Timeout, nil)
 							if err != nil {
 								return nil, fmt.Errorf("failed to create RPC reader for combined source %s in query %s: %w",
 									sourceName, query.ID, err)
@@ -327,7 +327,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 				processedQuery = strings.ReplaceAll(processedQuery, placeholder, value)
 			}
 
-			rpcReader, err := rpcreader.NewReader(url, template.Method, processedQuery, processedHeaders, endpoint.ResponsePath, template.Timeout)
+			rpcReader, err := rpcreader.NewReader(url, template.Method, processedQuery, processedHeaders, endpoint.ResponsePath, template.Timeout, endpoint.Params)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create RPC reader for endpoint %s in query %s: %w", endpoint.EndpointType, query.ID, err)
 			}

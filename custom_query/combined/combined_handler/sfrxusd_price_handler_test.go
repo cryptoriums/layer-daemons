@@ -43,6 +43,7 @@ func TestSFRXUSDHandler_Success(t *testing.T) {
 		nil,
 		[]string{"frax", "usd"},
 		5000,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -53,6 +54,7 @@ func TestSFRXUSDHandler_Success(t *testing.T) {
 		nil,
 		[]string{"data", "usd_price"},
 		5000,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -63,6 +65,7 @@ func TestSFRXUSDHandler_Success(t *testing.T) {
 		nil,
 		[]string{"quotes", "USD", "price"},
 		5000,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -140,6 +143,7 @@ func TestSFRXUSDHandler_InsufficientSources(t *testing.T) {
 		nil,
 		[]string{"frax", "usd"},
 		5000,
+		nil,
 	)
 	require.NoError(t, err)
 

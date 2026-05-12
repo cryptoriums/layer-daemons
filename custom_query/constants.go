@@ -24,6 +24,19 @@ var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 		Method:      "GET",
 		Timeout:     5000,
 	},
+	// curveSusdeFactoryStableNg: fixed getPools URL for factory-stable-ng (legacy name). Use with curve_factory_price
+	// and params target_token, exclude_pools, merge_get_pools_url (see curveEthereumGetPools for parameterized registry).
+	"curveSusdeFactoryStableNg": {
+		URLTemplate: "https://api.curve.fi/api/getPools/ethereum/factory-stable-ng",
+		Method:      "GET",
+		Timeout:     5000,
+	},
+	// curveEthereumGetPools: Curve getPools for ethereum/{registry}. Params: registry (URL), plus handler params on Reader.
+	"curveEthereumGetPools": {
+		URLTemplate: "https://api.curve.fi/api/getPools/ethereum/{registry}",
+		Method:      "GET",
+		Timeout:     5000,
+	},
 	"crypto": {
 		URLTemplate: "https://api.crypto.com/v2/public/get-ticker?instrument_name={instrument_name}",
 		Method:      "GET",
@@ -50,7 +63,7 @@ var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 		Timeout:     5000,
 	},
 	"uniswapV4ethereum": {
-		// docs: https://docs.uniswap.org/api/subgraph/overview
+		// docs: https://docs.uniswap.org/api/subgraph/overview — requires SUBGRAPH_API_KEY in the environment.
 		URLTemplate: "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G",
 		Query:       `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
 		Method:      "POST",
@@ -58,8 +71,18 @@ var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 		Headers:     map[string]string{"Content-Type": "application/json"},
 		ApiKey:      "${SUBGRAPH_API_KEY}",
 	},
+	// theGraphUniswapStylePool: The Graph gateway + Uniswap v3/v4 Pool entity (token0/token1 + token0Price/token1Price).
+	// Params: subgraph_id, pool_id, target_token, quote_token for subgraph_uniswap_pool_pair_usd (uses token1Price when target is token0, token0Price when target is token1). SUBGRAPH_API_KEY required.
+	"theGraphUniswapStylePool": {
+		URLTemplate: "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/{subgraph_id}",
+		Query:       `{"query": "{ pool(id: \"{pool_id}\") { token0 { id } token1 { id } token0Price token1Price } }"}`,
+		Method:      "POST",
+		Timeout:     5000,
+		Headers:     map[string]string{"Content-Type": "application/json"},
+		ApiKey:      "${SUBGRAPH_API_KEY}",
+	},
 	"uniswapV3ethereum": {
-		// docs: https://docs.uniswap.org/api/subgraph/overview
+		// Ethereum Uniswap v3 subgraph on The Graph network gateway. Requires SUBGRAPH_API_KEY in the environment at reporter startup.
 		URLTemplate: "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
 		Query:       `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
 		Method:      "POST",
@@ -149,7 +172,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ID:                "59ae85cec665c779f18255dd4f3d97821e6a122691ee070b9a26888bc2a0e45a",
 		AggregationMethod: "median",
 		MaxSpreadPercent:  10.0,
-		MinResponses:      1,
+		MinResponses:      2,
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
@@ -158,6 +181,34 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 				Params: map[string]string{
 					"coin_id": "susds",
 				},
+				MarketId: "SUSDS-USD",
+			},
+			{
+				EndpointType: "coinpaprika",
+				ResponsePath: []string{"quotes", "USD", "price"},
+				Params: map[string]string{
+					"coin_id": "susds-susds",
+				},
+				MarketId: "SUSDS-USD",
+			},
+			{
+				EndpointType: "curve",
+				ResponsePath: []string{"data", "usd_price"},
+				Params: map[string]string{
+					"contract_address": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd",
+				},
+				MarketId: "SUSDS-USD",
+			},
+			{
+				EndpointType: "theGraphUniswapStylePool",
+				Handler:      "subgraph_uniswap_pool_pair_usd",
+				Params: map[string]string{
+					"subgraph_id":  "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+					"pool_id":      "0x735cdc75fb1f24f53bb8ffa4e7eb2d795005210f",
+					"target_token": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd",
+					"quote_token":  "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+				},
+				UsdViaID: exchange_common.USDCUSD_ID,
 				MarketId: "SUSDS-USD",
 			},
 		},
@@ -181,7 +232,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ID:                "03731257e35c49e44b267640126358e5decebdd8f18b5e8f229542ec86e318cf",
 		AggregationMethod: "median",
 		MaxSpreadPercent:  10.0,
-		MinResponses:      1,
+		MinResponses:      2,
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
@@ -189,6 +240,45 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 				Handler:      "susdeusd_handler",
 				Chain:        "ethereum",
 				MarketId:     "SUSDE-USD",
+			},
+			{
+				EndpointType: "coingecko",
+				ResponsePath: []string{"ethena-staked-usde", "usd"},
+				Params: map[string]string{
+					"coin_id": "ethena-staked-usde",
+				},
+				MarketId: "SUSDE-USD",
+			},
+			{
+				EndpointType: "coinmarketcap",
+				ResponsePath: []string{"data", "29471", "quote", "USD", "price"},
+				Params: map[string]string{
+					"id": "29471",
+				},
+				MarketId: "SUSDE-USD",
+			},
+			{
+				EndpointType: "curveEthereumGetPools",
+				Handler:      "curve_factory_price",
+				Params: map[string]string{
+					"registry":            "factory-stable-ng",
+					"target_token":        "0x9d39a5de30e57443bff2a8307a4256c8797a3497",
+					"exclude_pools":       "0x4b5e827f4c0a1042272a11857a355da1f4ceebae",
+					"merge_get_pools_url": "https://api.curve.finance/api/getPools/ethereum/main",
+				},
+				MarketId: "SUSDE-USD",
+			},
+			{
+				EndpointType: "theGraphUniswapStylePool",
+				Handler:      "subgraph_uniswap_pool_pair_usd",
+				Params: map[string]string{
+					"subgraph_id":  "DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G",
+					"pool_id":      "0xb20351bcf606dcc3525d2ed36760a86a5dec7423b77d41125bd4a416ba93448b",
+					"target_token": "0x9d39a5de30e57443bff2a8307a4256c8797a3497",
+					"quote_token":  "0xdac17f958d2ee523a2206206994597c13d831ec7",
+				},
+				UsdViaID: exchange_common.USDTUSD_ID,
+				MarketId: "SUSDE-USD",
 			},
 		},
 	},

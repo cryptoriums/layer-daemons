@@ -5,15 +5,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tellor-io/layer-daemons/configs"
 	"github.com/tellor-io/layer-daemons/constants"
 	customquery "github.com/tellor-io/layer-daemons/custom_query"
+	"github.com/tellor-io/layer-daemons/exchange_common"
 	"github.com/tellor-io/layer-daemons/lib"
 	libtime "github.com/tellor-io/layer-daemons/lib/time"
 	handler "github.com/tellor-io/layer-daemons/pricefeed/client/queryhandler"
 	"github.com/tellor-io/layer-daemons/pricefeed/client/types"
+	serverdaemon "github.com/tellor-io/layer-daemons/server/types/daemons"
 	pricefeedservertypes "github.com/tellor-io/layer-daemons/server/types/pricefeed"
 	daemontypes "github.com/tellor-io/layer-daemons/types"
 
@@ -27,9 +30,28 @@ type exchangeTestResult struct {
 	Error   string
 }
 
-// runTestMode loads all price feed configurations and tests them
-func runTestMode(homePath string, logger log.Logger) error {
+// runTestMode loads all price feed configurations and tests them.
+// If isolatedQueryID is non-empty, only that custom query is run (no exchange/market tests).
+func runTestMode(homePath string, logger log.Logger, isolatedQueryID string) error {
 	logger.Info("Starting test mode - verifying price feed configurations")
+
+	if isolatedQueryID != "" {
+		logger.Info("Isolated custom query test (--test-query-id); skipping exchange/market tests")
+		customQueries, err := customquery.BuildQueryEndpoints(homePath, "config", "custom_query_config.toml")
+		if err != nil {
+			return fmt.Errorf("load custom queries: %w", err)
+		}
+		id := strings.ToLower(strings.TrimSpace(isolatedQueryID))
+		qc, ok := customQueries[id]
+		if !ok {
+			return fmt.Errorf("custom query id not found in config: %s", id)
+		}
+		if err := testCustomQuery(id, qc, logger); err != nil {
+			return fmt.Errorf("custom query test failed: %w", err)
+		}
+		logger.Info("Isolated custom query test succeeded", "query_id", id)
+		return nil
+	}
 
 	// Load configurations
 	logger.Info("Loading market parameters...")
@@ -274,13 +296,14 @@ func queryExchangeForMarket(
 func testCustomQuery(queryId string, queryConfig customquery.QueryConfig, logger log.Logger) error {
 	logger.Info("Testing custom query", "query_id", queryId)
 
-	// Create an empty price cache for custom queries that may need it
 	priceCache := pricefeedservertypes.NewMarketToExchangePrices(5 * time.Minute)
+	seedTestModePriceCacheForCustomQueries(priceCache, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	results, err := customquery.FetchPrice(ctx, queryConfig, priceCache)
+	logCustomQuerySourceResults(logger, queryId, results)
 	if err != nil {
 		logger.Warn("  ✗ Custom query failed",
 			"query_id", queryId,
@@ -292,7 +315,68 @@ func testCustomQuery(queryId string, queryConfig customquery.QueryConfig, logger
 	logger.Info("  ✓ Custom query succeeded",
 		"query_id", queryId,
 		"encoded_value", results.EncodedValue,
+		"success_rate", results.SuccessRate,
 	)
 
 	return nil
+}
+
+// logCustomQuerySourceResults prints one line per configured endpoint (contract, RPC, or combined).
+// On failure, FetchPrice may still return results with RawResults populated for diagnostics.
+func logCustomQuerySourceResults(logger log.Logger, queryId string, fr *customquery.FetchPriceResult) {
+	if fr == nil || len(fr.RawResults) == 0 {
+		logger.Info("custom query per-source results", "query_id", queryId, "count", 0, "note", "no per-endpoint results")
+		return
+	}
+	for i, r := range fr.RawResults {
+		if r.Err != nil {
+			logger.Info("custom query per-source result",
+				"query_id", queryId,
+				"source_index", i,
+				"source_id", r.SourceId,
+				"endpoint_id", r.EndpointID,
+				"market_id", r.MarketId,
+				"ok", false,
+				"error", r.Err.Error(),
+			)
+			continue
+		}
+		logger.Info("custom query per-source result",
+			"query_id", queryId,
+			"source_index", i,
+			"source_id", r.SourceId,
+			"endpoint_id", r.EndpointID,
+			"market_id", r.MarketId,
+			"ok", true,
+			"price", r.Value,
+		)
+	}
+}
+
+// seedTestModePriceCacheForCustomQueries injects synthetic medians so handlers that read
+// GetValidMedianPrices (e.g. SUSDE contract + USDT-via-Uniswap) work under --test without a live pricefeed.
+func seedTestModePriceCacheForCustomQueries(cache *pricefeedservertypes.MarketToExchangePrices, logger log.Logger) {
+	now := time.Now()
+	px := func(marketID uint32, n int, price uint64) []*serverdaemon.ExchangePrice {
+		out := make([]*serverdaemon.ExchangePrice, n)
+		for i := 0; i < n; i++ {
+			t := now
+			out[i] = &serverdaemon.ExchangePrice{
+				ExchangeId:     fmt.Sprintf("test-m%d-%d", marketID, i),
+				Price:          price,
+				LastUpdateTime: &t,
+			}
+		}
+		return out
+	}
+	// Exponents are -6 for these markets (see constants.StaticMarketParamsConfig): raw 1e6 ~= 1 USD.
+	cache.UpdatePrices([]*serverdaemon.MarketPriceUpdate{
+		{MarketId: exchange_common.USDEUSD_ID, ExchangePrices: px(exchange_common.USDEUSD_ID, 1, 1_000_000)},
+		{MarketId: exchange_common.USDTUSD_ID, ExchangePrices: px(exchange_common.USDTUSD_ID, 2, 1_000_000)},
+		{MarketId: exchange_common.ETHUSD_ID, ExchangePrices: px(exchange_common.ETHUSD_ID, 3, 3_000_000_000_000)}, // ~3000 USD
+		{MarketId: exchange_common.USDCUSD_ID, ExchangePrices: px(exchange_common.USDCUSD_ID, 2, 1_000_000)},
+		{MarketId: exchange_common.STETHUSD_ID, ExchangePrices: px(exchange_common.STETHUSD_ID, 1, 3_000_000_000_000)},
+		{MarketId: exchange_common.ATOMUSD_ID, ExchangePrices: px(exchange_common.ATOMUSD_ID, 3, 8_000_000)},
+	})
+	logger.Info("Seeded synthetic reference prices for --test custom queries (not live exchange data)")
 }
