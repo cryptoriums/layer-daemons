@@ -25,6 +25,12 @@ Each endpoint represents an API source:
 url_template = "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
 method = "GET"
 timeout = 5000
+
+[endpoints.coingeckoPro]
+url_template = "https://pro-api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd&x_cg_pro_api_key={api_key}"
+method = "GET"
+timeout = 5000
+api_key = "${CGPRO_API_KEY}"
 ```
 
 Endpoints support:
@@ -33,6 +39,8 @@ Endpoints support:
 - Custom timeouts
 - API keys via environment variables (`${ENV_VAR_NAME}`)
 - Custom headers
+
+For generated defaults that use Coingecko Pro, set `CGPRO_API_KEY` in your `.env` file. See [`../env.example`](../env.example) for the expected variable names.
 
 ### 2. Queries
 
