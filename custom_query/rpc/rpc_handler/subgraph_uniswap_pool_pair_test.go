@@ -176,9 +176,9 @@ func TestSubgraphUniswapPoolPairHandler_metaBlockTimestampStale(t *testing.T) {
       "token0": { "id": "0x9d39a5de30e57443bff2a8307a4256c8797a3497" },
       "token1": { "id": "0xdac17f958d2ee523a2206206994597c13d831ec7" },
       "token0Price": "0.5",
-      "token1Price": "2.0",
-      "_meta": { "block": { "timestamp": %d } }
-    }
+      "token1Price": "2.0"
+    },
+    "_meta": { "block": { "timestamp": %d } }
   }
 }`, staleTs)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -215,9 +215,9 @@ func TestSubgraphUniswapPoolPairHandler_metaBlockTimestampFresh(t *testing.T) {
       "token0": { "id": "0x9d39a5de30e57443bff2a8307a4256c8797a3497" },
       "token1": { "id": "0xdac17f958d2ee523a2206206994597c13d831ec7" },
       "token0Price": "0.5",
-      "token1Price": "2.0",
-      "_meta": { "block": { "timestamp": %d } }
-    }
+      "token1Price": "2.0"
+    },
+    "_meta": { "block": { "timestamp": %d } }
   }
 }`, freshTs)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

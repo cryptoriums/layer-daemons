@@ -175,46 +175,56 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 									endpointType, sourceName, query.ID)
 							}
 
-							// Build RPC URL from template
-							url := template.URLTemplate
+						// Build RPC URL from template
+						url := template.URLTemplate
 
-							// Process source-specific parameters (e.g., "sushiswap_api_params" or "coingecko_api_params")
-							paramsKey := sourceName + "_params"
-							if paramsRaw, exists := endpoint.CombinedConfig[paramsKey]; exists {
-								for key, value := range paramsRaw.(map[string]any) {
-									placeholder := fmt.Sprintf("{%s}", key)
-									url = strings.ReplaceAll(url, placeholder, fmt.Sprintf("%v", value))
-								}
+						// Process source-specific parameters (e.g., "sushiswap_api_params" or "coingecko_api_params")
+						paramsKey := sourceName + "_params"
+						sourceParams := make(map[string]string)
+						if paramsRaw, exists := endpoint.CombinedConfig[paramsKey]; exists {
+							for key, value := range paramsRaw.(map[string]any) {
+								placeholder := fmt.Sprintf("{%s}", key)
+								v := fmt.Sprintf("%v", value)
+								url = strings.ReplaceAll(url, placeholder, v)
+								sourceParams[key] = v
 							}
+						}
 
-							// Replace API key if needed
-							url = strings.ReplaceAll(url, "{api_key}", template.ApiKey)
+						// Replace API key if needed
+						url = strings.ReplaceAll(url, "{api_key}", template.ApiKey)
 
-							processedHeaders := make(map[string]string)
-							for key, value := range template.Headers {
-								if strings.EqualFold(value, "api_key") {
-									value = template.ApiKey
-								}
-								processedHeaders[key] = value
+						processedHeaders := make(map[string]string)
+						for key, value := range template.Headers {
+							if strings.EqualFold(value, "api_key") {
+								value = template.ApiKey
 							}
+							processedHeaders[key] = value
+						}
 
-							// Get source-specific response path (e.g., "sushiswap_api_response_path")
-							var responsePath []string
-							respPathKey := sourceName + "_response_path"
-							if respPathRaw, exists := endpoint.CombinedConfig[respPathKey]; exists {
-								if respPath, ok := respPathRaw.([]string); ok {
-									responsePath = respPath
-								} else if respPathInterface, ok := respPathRaw.([]any); ok {
-									for _, p := range respPathInterface {
-										if str, ok := p.(string); ok {
-											responsePath = append(responsePath, str)
-										}
+						// Also substitute params into the query body (e.g. {pool_id} in GraphQL queries)
+						processedQuery := template.Query
+						for key, value := range sourceParams {
+							placeholder := fmt.Sprintf("{%s}", key)
+							processedQuery = strings.ReplaceAll(processedQuery, placeholder, value)
+						}
+
+						// Get source-specific response path (e.g., "sushiswap_api_response_path")
+						var responsePath []string
+						respPathKey := sourceName + "_response_path"
+						if respPathRaw, exists := endpoint.CombinedConfig[respPathKey]; exists {
+							if respPath, ok := respPathRaw.([]string); ok {
+								responsePath = respPath
+							} else if respPathInterface, ok := respPathRaw.([]any); ok {
+								for _, p := range respPathInterface {
+									if str, ok := p.(string); ok {
+										responsePath = append(responsePath, str)
 									}
 								}
 							}
+						}
 
-							reader, err := rpcreader.NewReader(url, template.Method, template.Query,
-								processedHeaders, responsePath, template.Timeout, nil)
+						reader, err := rpcreader.NewReader(url, template.Method, processedQuery,
+							processedHeaders, responsePath, template.Timeout, sourceParams)
 							if err != nil {
 								return nil, fmt.Errorf("failed to create RPC reader for combined source %s in query %s: %w",
 									sourceName, query.ID, err)

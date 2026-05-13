@@ -86,7 +86,7 @@ var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 	// Params: subgraph_id, pool_id, target_token, quote_token for subgraph_uniswap_pool_pair_usd (uses token1Price when target is token0, token0Price when target is token1). SUBGRAPH_API_KEY required.
 	"theGraphUniswapStylePool": {
 		URLTemplate:    "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/{subgraph_id}",
-		Query:          `{"query": "{ pool(id: \"{pool_id}\") { token0 { id } token1 { id } token0Price token1Price _meta { block { timestamp } } } }"}`,
+		Query:          `{"query": "{ pool(id: \"{pool_id}\") { token0 { id } token1 { id } token0Price token1Price } _meta { block { timestamp } } }"}`,
 		Method:         "POST",
 		Timeout:        5000,
 		Headers:        map[string]string{"Content-Type": "application/json"},
@@ -211,18 +211,6 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 				Params: map[string]string{
 					"contract_address": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd",
 				},
-				MarketId: "SUSDS-USD",
-			},
-			{
-				EndpointType: "theGraphUniswapStylePool",
-				Handler:      "subgraph_uniswap_pool_pair_usd",
-				Params: map[string]string{
-					"subgraph_id":  "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
-					"pool_id":      "0x735cdc75fb1f24f53bb8ffa4e7eb2d795005210f",
-					"target_token": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd",
-					"quote_token":  "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
-				},
-				UsdViaID: exchange_common.USDCUSD_ID,
 				MarketId: "SUSDS-USD",
 			},
 		},
@@ -466,6 +454,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 					"ethereum":    "contract:ethereum",
 					"coinpaprika": "rpc:coinpaprika",
 					"coingecko":   "rpc:coingecko",
+					"uniswap":     "rpc:theGraphUniswapStylePool",
 				},
 				CombinedConfig: map[string]any{
 					"min_responses":             1,
@@ -478,6 +467,13 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 					"coinpaprika_params": map[string]string{
 						"coin_id": "usn1-noon-usn",
 					},
+					// USN/USDT pool on Uniswap V3 (USN=token0, USDT=token1).
+					// token1Price = USDT per USN ≈ USD per USN.
+					"uniswap_params": map[string]any{
+						"subgraph_id": "5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+						"pool_id":     "0x526cd4f72f2cc54d6a02a7fefc84753a826a5737",
+					},
+					"uniswap_response_path": []string{"data", "pool", "token1Price"},
 				},
 			},
 		},

@@ -33,6 +33,7 @@ type subgraphPoolGQLTop struct {
 	} `json:"errors"`
 	Data *struct {
 		Pool *subgraphPoolGQL `json:"pool"`
+		Meta *subgraphMeta    `json:"_meta"`
 	} `json:"data"`
 }
 
@@ -41,7 +42,6 @@ type subgraphPoolGQL struct {
 	Token1      *subgraphPoolTokenRef `json:"token1"`
 	Token0Price string                `json:"token0Price"`
 	Token1Price string                `json:"token1Price"`
-	Meta        *subgraphMeta         `json:"_meta"`
 }
 
 type subgraphPoolTokenRef struct {
@@ -94,8 +94,8 @@ func (h *SubgraphUniswapPoolPairHandler) FetchValue(
 	p := top.Data.Pool
 
 	// Check subgraph freshness using the indexed block timestamp from _meta.
-	if p.Meta != nil && p.Meta.Block.Timestamp > 0 {
-		dataTime := time.Unix(p.Meta.Block.Timestamp, 0)
+	if top.Data.Meta != nil && top.Data.Meta.Block.Timestamp > 0 {
+		dataTime := time.Unix(top.Data.Meta.Block.Timestamp, 0)
 		if err := checkDataAge(dataTime, maxDataAge); err != nil {
 			return 0, fmt.Errorf("subgraph uniswap pool pair: %w", err)
 		}
