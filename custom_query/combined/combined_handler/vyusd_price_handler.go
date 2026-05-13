@@ -31,7 +31,9 @@ func (h *VYUSDPriceHandler) FetchValue(
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
 	_ int,
 	_ float64,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	// Validate we have the required readers
 	contractReader, exists := contractReaders["ethereum"]
 	if !exists {
@@ -51,6 +53,10 @@ func (h *VYUSDPriceHandler) FetchValue(
 
 	// Wait for all fetches to complete
 	fetcher.Wait()
+
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("vyusd: %w", err)
+	}
 
 	conversionBytes, err := fetcher.GetContractBytes("conversion_rate")
 	if err != nil {

@@ -187,7 +187,7 @@ func fetchFromContractEndpoint(
 			SourceId:   contractReader.SourceId,
 		}
 	}
-	value, err := handler.FetchValue(ctx, contractReader.Reader, priceCache)
+	value, err := handler.FetchValue(ctx, contractReader.Reader, priceCache, contractReader.MaxDataAge)
 	if err != nil {
 		return Result{
 			Err:        fmt.Errorf("failed to fetch contract value: %w", err),
@@ -228,7 +228,7 @@ func fetchFromRpcEndpoint(
 		}
 	}
 
-	value, err := handler.FetchValue(ctx, rpchandler.Reader, rpchandler.Invert, rpchandler.UsdViaID, priceCache)
+	value, err := handler.FetchValue(ctx, rpchandler.Reader, rpchandler.Invert, rpchandler.UsdViaID, priceCache, rpchandler.MaxDataAge)
 	if err != nil {
 		return Result{
 			Err:        fmt.Errorf("failed to fetch value: %w", err),
@@ -283,7 +283,7 @@ func fetchFromCombinedEndpoint(
 		}
 	}
 
-	value, err := handler.FetchValue(ctx, combinedReader.ContractReaders, combinedReader.RpcReaders, priceCache, combinedReader.MinResponses, combinedReader.MaxSpreadPercent)
+	value, err := handler.FetchValue(ctx, combinedReader.ContractReaders, combinedReader.RpcReaders, priceCache, combinedReader.MinResponses, combinedReader.MaxSpreadPercent, combinedReader.MaxDataAge)
 	if err != nil {
 		return Result{
 			Err:        fmt.Errorf("failed to fetch combined value: %w", err),

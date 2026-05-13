@@ -4,43 +4,50 @@ import "github.com/tellor-io/layer-daemons/exchange_common"
 
 var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 	"coingecko": {
-		URLTemplate: "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 	"coingeckoPro": {
-		URLTemplate: "https://pro-api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd&x_cg_pro_api_key={api_key}",
-		Method:      "GET",
-		Timeout:     5000,
-		ApiKey:      "${CGPRO_API_KEY}",
+		URLTemplate:    "https://pro-api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd&x_cg_pro_api_key={api_key}",
+		Method:         "GET",
+		Timeout:        5000,
+		ApiKey:         "${CGPRO_API_KEY}",
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 	"coinpaprika": {
-		URLTemplate: "https://api.coinpaprika.com/v1/tickers/{coin_id}?quotes=USD",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.coinpaprika.com/v1/tickers/{coin_id}?quotes=USD",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 	"curve": {
-		URLTemplate: "https://prices.curve.finance/v1/usd_price/ethereum/{contract_address}",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://prices.curve.finance/v1/usd_price/ethereum/{contract_address}",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 	// curveSusdeFactoryStableNg: fixed getPools URL for factory-stable-ng (legacy name). Use with curve_factory_price
 	// and params target_token, exclude_pools, merge_get_pools_url (see curveEthereumGetPools for parameterized registry).
 	"curveSusdeFactoryStableNg": {
-		URLTemplate: "https://api.curve.fi/api/getPools/ethereum/factory-stable-ng",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.curve.fi/api/getPools/ethereum/factory-stable-ng",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 	// curveEthereumGetPools: Curve getPools for ethereum/{registry}. Params: registry (URL), plus handler params on Reader.
 	"curveEthereumGetPools": {
-		URLTemplate: "https://api.curve.fi/api/getPools/ethereum/{registry}",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.curve.fi/api/getPools/ethereum/{registry}",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 	"crypto": {
-		URLTemplate: "https://api.crypto.com/v2/public/get-ticker?instrument_name={instrument_name}",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.crypto.com/v2/public/get-ticker?instrument_name={instrument_name}",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 	"coinmarketcap": {
 		URLTemplate: "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?id={id}",
@@ -51,50 +58,57 @@ var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 			"Accept":            "application/json",
 			"X-CMC_PRO_API_KEY": "api_key",
 		},
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 	"coinbase": {
-		URLTemplate: "https://api.coinbase.com/v2/prices/{currency_pair}/spot",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.coinbase.com/v2/prices/{currency_pair}/spot",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 	"osmosis": {
-		URLTemplate: "https://lcd.osmosis.zone/osmosis/gamm/v1beta1/pools/{pool_id}",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://lcd.osmosis.zone/osmosis/gamm/v1beta1/pools/{pool_id}",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 600, // 10 minutes — uses native last_liquidity_update timestamp
 	},
 	"uniswapV4ethereum": {
 		// docs: https://docs.uniswap.org/api/subgraph/overview — requires SUBGRAPH_API_KEY in the environment.
-		URLTemplate: "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G",
-		Query:       `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
-		Method:      "POST",
-		Timeout:     5000,
-		Headers:     map[string]string{"Content-Type": "application/json"},
-		ApiKey:      "${SUBGRAPH_API_KEY}",
+		URLTemplate:    "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G",
+		Query:          `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
+		Method:         "POST",
+		Timeout:        5000,
+		Headers:        map[string]string{"Content-Type": "application/json"},
+		ApiKey:         "${SUBGRAPH_API_KEY}",
+		MaxDataAgeSecs: 600, // 10 minutes — indexed data can lag behind chain head
 	},
 	// theGraphUniswapStylePool: The Graph gateway + Uniswap v3/v4 Pool entity (token0/token1 + token0Price/token1Price).
 	// Params: subgraph_id, pool_id, target_token, quote_token for subgraph_uniswap_pool_pair_usd (uses token1Price when target is token0, token0Price when target is token1). SUBGRAPH_API_KEY required.
 	"theGraphUniswapStylePool": {
-		URLTemplate: "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/{subgraph_id}",
-		Query:       `{"query": "{ pool(id: \"{pool_id}\") { token0 { id } token1 { id } token0Price token1Price } }"}`,
-		Method:      "POST",
-		Timeout:     5000,
-		Headers:     map[string]string{"Content-Type": "application/json"},
-		ApiKey:      "${SUBGRAPH_API_KEY}",
+		URLTemplate:    "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/{subgraph_id}",
+		Query:          `{"query": "{ pool(id: \"{pool_id}\") { token0 { id } token1 { id } token0Price token1Price _meta { block { timestamp } } } }"}`,
+		Method:         "POST",
+		Timeout:        5000,
+		Headers:        map[string]string{"Content-Type": "application/json"},
+		ApiKey:         "${SUBGRAPH_API_KEY}",
+		MaxDataAgeSecs: 600, // 10 minutes — uses native _meta.block.timestamp
 	},
 	"uniswapV3ethereum": {
 		// Ethereum Uniswap v3 subgraph on The Graph network gateway. Requires SUBGRAPH_API_KEY in the environment at reporter startup.
-		URLTemplate: "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
-		Query:       `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
-		Method:      "POST",
-		Timeout:     5000,
-		Headers:     map[string]string{"Content-Type": "application/json"},
-		ApiKey:      "${SUBGRAPH_API_KEY}",
+		URLTemplate:    "https://gateway.thegraph.com/api/{api_key}/subgraphs/id/5zvR82QoaXYFyDEKLZ9t6v9adgnptxYpKpSbxtgVENFV",
+		Query:          `{"query": "{ token(id: \"{token_address}\") { derivedETH } }"}`,
+		Method:         "POST",
+		Timeout:        5000,
+		Headers:        map[string]string{"Content-Type": "application/json"},
+		ApiKey:         "${SUBGRAPH_API_KEY}",
+		MaxDataAgeSecs: 600, // 10 minutes — indexed data can lag behind chain head
 	},
 	"sushiswapKatana": {
 		// docs: https://docs.sushi.com/api/examples/pricing
-		URLTemplate: "https://api.sushi.com/price/v1/747474",
-		Method:      "GET",
-		Timeout:     5000,
+		URLTemplate:    "https://api.sushi.com/price/v1/747474",
+		Method:         "GET",
+		Timeout:        5000,
+		MaxDataAgeSecs: 300, // 5 minutes
 	},
 }
 

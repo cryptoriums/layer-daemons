@@ -84,7 +84,7 @@ func TestSFRXUSDHandler_Success(t *testing.T) {
 	handler := &SFRXUSDPriceHandler{}
 	ctx := context.Background()
 
-	price, err := handler.FetchValue(ctx, contractReaders, rpcReaders, priceCache, 2, 50.0)
+	price, err := handler.FetchValue(ctx, contractReaders, rpcReaders, priceCache, 2, 50.0, 0)
 
 	require.NoError(t, err)
 	expectedPrice := (float64(totalAssets.Int64()) / float64(totalSupply.Int64())) * 1.02
@@ -96,7 +96,7 @@ func TestSFRXUSDHandler_MissingContractReader(t *testing.T) {
 	handler := &SFRXUSDPriceHandler{}
 	ctx := context.Background()
 
-	_, err := handler.FetchValue(ctx, map[string]*contractreader.Reader{}, make(map[string]*rpcreader.Reader), priceCache, 2, 50.0)
+	_, err := handler.FetchValue(ctx, map[string]*contractreader.Reader{}, make(map[string]*rpcreader.Reader), priceCache, 2, 50.0, 0)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "ethereum contract reader not found")
@@ -116,7 +116,7 @@ func TestSFRXUSDHandler_ZeroTotalSupply(t *testing.T) {
 	handler := &SFRXUSDPriceHandler{}
 	ctx := context.Background()
 
-	_, err = handler.FetchValue(ctx, map[string]*contractreader.Reader{"ethereum": contractReader}, make(map[string]*rpcreader.Reader), priceCache, 2, 50.0)
+	_, err = handler.FetchValue(ctx, map[string]*contractreader.Reader{"ethereum": contractReader}, make(map[string]*rpcreader.Reader), priceCache, 2, 50.0, 0)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid total supply: zero")
@@ -151,7 +151,7 @@ func TestSFRXUSDHandler_InsufficientSources(t *testing.T) {
 	handler := &SFRXUSDPriceHandler{}
 	ctx := context.Background()
 
-	_, err = handler.FetchValue(ctx, map[string]*contractreader.Reader{"ethereum": contractReader}, map[string]*rpcreader.Reader{"coingecko": coingeckoReader}, priceCache, 2, 50.0)
+	_, err = handler.FetchValue(ctx, map[string]*contractreader.Reader{"ethereum": contractReader}, map[string]*rpcreader.Reader{"coingecko": coingeckoReader}, priceCache, 2, 50.0, 0)
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "insufficient FRX/USD prices")

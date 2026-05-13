@@ -41,15 +41,24 @@ type subgraphPoolGQL struct {
 	Token1      *subgraphPoolTokenRef `json:"token1"`
 	Token0Price string                `json:"token0Price"`
 	Token1Price string                `json:"token1Price"`
+	Meta        *subgraphMeta         `json:"_meta"`
 }
 
 type subgraphPoolTokenRef struct {
 	ID string `json:"id"`
 }
 
+type subgraphMeta struct {
+	Block struct {
+		// Unix timestamp of the most recently indexed block.
+		Timestamp int64 `json:"timestamp"`
+	} `json:"block"`
+}
+
 func (h *SubgraphUniswapPoolPairHandler) FetchValue(
 	ctx context.Context, r *reader.Reader, invert bool, usdViaID uint32,
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
 	if usdViaID == 0 {
 		return 0, fmt.Errorf("subgraph uniswap pool pair: usd_via_id is required")
@@ -83,6 +92,14 @@ func (h *SubgraphUniswapPoolPairHandler) FetchValue(
 	}
 
 	p := top.Data.Pool
+
+	// Check subgraph freshness using the indexed block timestamp from _meta.
+	if p.Meta != nil && p.Meta.Block.Timestamp > 0 {
+		dataTime := time.Unix(p.Meta.Block.Timestamp, 0)
+		if err := checkDataAge(dataTime, maxDataAge); err != nil {
+			return 0, fmt.Errorf("subgraph uniswap pool pair: %w", err)
+		}
+	}
 	if p.Token0 == nil || p.Token1 == nil {
 		return 0, fmt.Errorf("subgraph uniswap pool pair: missing token0/token1")
 	}

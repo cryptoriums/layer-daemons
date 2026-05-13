@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	reader "github.com/tellor-io/layer-daemons/custom_query/rpc/rpc_reader"
 	pricefeedservertypes "github.com/tellor-io/layer-daemons/server/types/pricefeed"
@@ -71,6 +72,7 @@ type CurveFactoryPriceHandler struct{}
 func (h *CurveFactoryPriceHandler) FetchValue(
 	ctx context.Context, r *reader.Reader, _ bool, _ uint32,
 	_ *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
 	if r == nil || r.Params == nil {
 		return 0, fmt.Errorf("curve factory: reader params are required (target_token)")
@@ -82,9 +84,14 @@ func (h *CurveFactoryPriceHandler) FetchValue(
 	exclude := parseExcludedPoolSet(r.Params["exclude_pools"])
 	mergeURL := strings.TrimSpace(r.Params["merge_get_pools_url"])
 
+	fetchedAt := time.Now()
 	body, err := r.FetchJSON(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("curve factory: primary fetch: %w", err)
+	}
+	// Curve API responses carry no embedded timestamp; use fetch time as proxy.
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("curve factory: %w", err)
 	}
 
 	samples, perr := collectCurveUSDPricesFromGetPoolsJSON(body, target, exclude)

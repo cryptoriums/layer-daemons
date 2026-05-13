@@ -13,12 +13,13 @@ import (
 )
 
 type EndpointTemplate struct {
-	URLTemplate string            `toml:"url_template"`
-	Query       string            `toml:"query"` // for POST requests
-	Method      string            `toml:"method"`
-	Timeout     int               `toml:"timeout"`
-	ApiKey      string            `toml:"api_key"`
-	Headers     map[string]string `toml:"headers"`
+	URLTemplate    string            `toml:"url_template"`
+	Query          string            `toml:"query"` // for POST requests
+	Method         string            `toml:"method"`
+	Timeout        int               `toml:"timeout"`
+	ApiKey         string            `toml:"api_key"`
+	Headers        map[string]string `toml:"headers"`
+	MaxDataAgeSecs int               `toml:"max_data_age_seconds"` // 0 = disabled
 }
 
 type RPCEndpointTemplate struct {
@@ -31,21 +32,23 @@ type Config struct {
 }
 
 type ContractHandler struct {
-	Handler  string
-	Reader   *contractreader.Reader
-	MarketId string
-	SourceId string
+	Handler     string
+	Reader      *contractreader.Reader
+	MarketId    string
+	SourceId    string
+	MaxDataAge  time.Duration
 }
 
 type RpcHandler struct {
-	Handler    string
-	Reader     *rpcreader.Reader
-	Invert     bool
-	UsdViaID   uint32
-	Method     string
-	EndpointID string
-	MarketId   string
-	SourceId   string
+	Handler     string
+	Reader      *rpcreader.Reader
+	Invert      bool
+	UsdViaID    uint32
+	Method      string
+	EndpointID  string
+	MarketId    string
+	SourceId    string
+	MaxDataAge  time.Duration
 }
 
 type CombinedHandler struct {
@@ -55,6 +58,7 @@ type CombinedHandler struct {
 	Config           map[string]any
 	MinResponses     int
 	MaxSpreadPercent float64
+	MaxDataAge       time.Duration
 }
 type QueryConfig struct {
 	ID                string            `toml:"id"`
@@ -82,6 +86,9 @@ type EndpointConfig struct {
 	// cosmosis
 	Invert   bool   `toml:"invert"`
 	UsdViaID uint32 `toml:"usd_via_id"`
+
+	// Data freshness — overrides the endpoint template default when non-zero.
+	MaxDataAgeSecs int `toml:"max_data_age_seconds"`
 
 	// Combined handler fields
 	CombinedSources map[string]string `toml:"combined_sources"`
@@ -248,6 +255,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 					Config:           endpoint.CombinedConfig,
 					MinResponses:     minResponses,
 					MaxSpreadPercent: maxSpreadPercent,
+					MaxDataAge:       resolveMaxDataAge(0, endpoint.MaxDataAgeSecs),
 				})
 				continue
 			}
@@ -267,10 +275,11 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 				}
 
 				contractReaders = append(contractReaders, ContractHandler{
-					Handler:  endpoint.Handler,
-					Reader:   contractReader,
-					MarketId: endpoint.MarketId,
-					SourceId: endpoint.EndpointType,
+					Handler:    endpoint.Handler,
+					Reader:     contractReader,
+					MarketId:   endpoint.MarketId,
+					SourceId:   endpoint.EndpointType,
+					MaxDataAge: resolveMaxDataAge(0, endpoint.MaxDataAgeSecs),
 				})
 				continue
 			}
@@ -340,6 +349,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 				EndpointID: endpoint.EndpointType,
 				MarketId:   endpoint.MarketId,
 				SourceId:   endpoint.EndpointType,
+				MaxDataAge: resolveMaxDataAge(template.MaxDataAgeSecs, endpoint.MaxDataAgeSecs),
 			})
 		}
 		queryMap[query.ID] = QueryConfig{
@@ -355,6 +365,18 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 	}
 
 	return queryMap, nil
+}
+
+// resolveMaxDataAge returns the effective max data age duration for an endpoint.
+// The per-endpoint value takes precedence over the template default; 0 means disabled.
+func resolveMaxDataAge(templateSecs, endpointSecs int) time.Duration {
+	if endpointSecs > 0 {
+		return time.Duration(endpointSecs) * time.Second
+	}
+	if templateSecs > 0 {
+		return time.Duration(templateSecs) * time.Second
+	}
+	return 0
 }
 
 func processApiKeys(config *Config) {

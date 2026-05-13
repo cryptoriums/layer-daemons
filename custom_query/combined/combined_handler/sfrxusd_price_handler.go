@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"time"
 
 	log "github.com/sirupsen/logrus"
 	contract_handlers "github.com/tellor-io/layer-daemons/custom_query/contracts/contract_handlers"
@@ -28,7 +29,9 @@ func (h *SFRXUSDPriceHandler) FetchValue(
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
 	minResponses int,
 	maxSpreadPercent float64,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	// validate eth contract reader
 	contractReader, exists := contractReaders["ethereum"]
 	if !exists {
@@ -74,6 +77,10 @@ func (h *SFRXUSDPriceHandler) FetchValue(
 	}
 
 	fetcher.Wait()
+
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("sfrxusd: %w", err)
+	}
 
 	// parse contract data
 	totalAssetsBytes, err := fetcher.GetBytes("total_assets")

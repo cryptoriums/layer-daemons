@@ -26,6 +26,7 @@ const (
     url_template = "{{ $endpoint.URLTemplate }}"
     method = "{{ $endpoint.Method }}"
     timeout = {{ $endpoint.Timeout }}
+    max_data_age_seconds = {{ $endpoint.MaxDataAgeSecs }}
     {{- if $endpoint.Query }}
     query = '''{{ $endpoint.Query }}'''
     {{- end }}
@@ -70,6 +71,9 @@ const (
 		{{- end }}
 		{{- if $endpoint.UsdViaID }}
 		usd_via_id = {{ $endpoint.UsdViaID }}
+		{{- end }}
+		{{- if $endpoint.MaxDataAgeSecs }}
+		max_data_age_seconds = {{ $endpoint.MaxDataAgeSecs }}
 		{{- end }}
 		{{- if $endpoint.CombinedSources }}
 		combined_sources = { {{ formatCombinedSources $endpoint.CombinedSources }} }

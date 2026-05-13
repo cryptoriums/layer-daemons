@@ -25,6 +25,7 @@ const (
 func (h *OsmosisPoolPriceHandler) FetchValue(
 	ctx context.Context, reader *reader.Reader, _ bool, usdViaID uint32,
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
 	resp, err := reader.FetchJSON(ctx)
 	if err != nil {
@@ -62,6 +63,22 @@ func (h *OsmosisPoolPriceHandler) FetchValue(
 	if !ok {
 		return 0, fmt.Errorf("expected a dictionary for value, got %T", value)
 	}
+
+	// Use last_liquidity_update as the authoritative data timestamp when present.
+	if rawTs, exists := data["last_liquidity_update"]; exists {
+		if tsStr, ok := rawTs.(string); ok && tsStr != "" {
+			dataTime, err := time.Parse(time.RFC3339Nano, tsStr)
+			if err != nil {
+				dataTime, err = time.Parse(time.RFC3339, tsStr)
+			}
+			if err == nil {
+				if err := checkDataAge(dataTime, maxDataAge); err != nil {
+					return 0, fmt.Errorf("osmosis pool: %w", err)
+				}
+			}
+		}
+	}
+
 	currentSqrtPrice, ok := data["current_sqrt_price"]
 	if !ok {
 		return 0, fmt.Errorf("current_sqrt_price not found in JSON")

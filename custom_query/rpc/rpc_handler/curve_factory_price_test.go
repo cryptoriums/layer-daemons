@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tellor-io/layer-daemons/custom_query/contracts/contract_handlers"
@@ -67,7 +68,7 @@ func TestCurveFactoryPriceHandler_medianAndExclusions(t *testing.T) {
 	require.NoError(t, err)
 
 	var h CurveFactoryPriceHandler
-	v, err := h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{})
+	v, err := h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{}, 0)
 	require.NoError(t, err)
 	require.InDelta(t, 1.30, v, 1e-9)
 }
@@ -96,7 +97,7 @@ func TestCurveFactoryPriceHandler_v1Fallback(t *testing.T) {
 	require.NoError(t, err)
 
 	var h CurveFactoryPriceHandler
-	v, err := h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{})
+	v, err := h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{}, 0)
 	require.NoError(t, err)
 	require.InDelta(t, 1.25, v, 1e-9)
 }
@@ -116,7 +117,7 @@ func TestCurveFactoryPriceHandler_errors(t *testing.T) {
 		rdr, err := reader.NewReader(srv.URL, http.MethodGet, "", nil, nil, 5000, susdeCurveFactoryParams())
 		require.NoError(t, err)
 		var h CurveFactoryPriceHandler
-		_, err = h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{})
+		_, err = h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{}, 0)
 		require.Error(t, err)
 	})
 
@@ -132,7 +133,7 @@ func TestCurveFactoryPriceHandler_errors(t *testing.T) {
 		rdr, err := reader.NewReader(srv.URL, http.MethodGet, "", nil, nil, 5000, susdeCurveFactoryParams())
 		require.NoError(t, err)
 		var h CurveFactoryPriceHandler
-		_, err = h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{})
+		_, err = h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{}, 0)
 		require.Error(t, err)
 	})
 }
@@ -145,6 +146,52 @@ func TestCurveFactoryPriceHandler_missingTargetToken(t *testing.T) {
 	rdr, err := reader.NewReader(srv.URL, http.MethodGet, "", nil, nil, 5000, map[string]string{})
 	require.NoError(t, err)
 	var h CurveFactoryPriceHandler
-	_, err = h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{})
+	_, err = h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{}, 0)
 	require.Error(t, err)
+}
+
+func TestCurveFactoryPriceHandler_dataAgeTooOld(t *testing.T) {
+	oldGet := curveFactoryHTTPGet
+	curveFactoryHTTPGet = func(ctx context.Context, url string) ([]byte, error) {
+		return nil, fmt.Errorf("skip network in unit test")
+	}
+	t.Cleanup(func() { curveFactoryHTTPGet = oldGet })
+
+	const fixture = `{"success":true,"data":{"poolData":[{"address":"0x1111","coins":[{"address":"0x9d39a5de30e57443bff2a8307a4256c8797a3497","usdPrice":1.20,"symbol":"sUSDe"},{"address":"0xdac17f958d2ee523a2206206994597c13d831ec7","usdPrice":1.0,"symbol":"USDT"}]}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(fixture))
+	}))
+	t.Cleanup(srv.Close)
+
+	rdr, err := reader.NewReader(srv.URL, http.MethodGet, "", nil, nil, 5000, susdeCurveFactoryParams())
+	require.NoError(t, err)
+
+	var h CurveFactoryPriceHandler
+	// maxDataAge = 1ns forces fetch-time check to fail immediately
+	_, err = h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{}, 1*time.Nanosecond)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "data age")
+}
+
+func TestCurveFactoryPriceHandler_dataAgeDisabled(t *testing.T) {
+	oldGet := curveFactoryHTTPGet
+	curveFactoryHTTPGet = func(ctx context.Context, url string) ([]byte, error) {
+		return nil, fmt.Errorf("skip network in unit test")
+	}
+	t.Cleanup(func() { curveFactoryHTTPGet = oldGet })
+
+	const fixture = `{"success":true,"data":{"poolData":[{"address":"0x1111","coins":[{"address":"0x9d39a5de30e57443bff2a8307a4256c8797a3497","usdPrice":1.20,"symbol":"sUSDe"},{"address":"0xdac17f958d2ee523a2206206994597c13d831ec7","usdPrice":1.0,"symbol":"USDT"}]}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(fixture))
+	}))
+	t.Cleanup(srv.Close)
+
+	rdr, err := reader.NewReader(srv.URL, http.MethodGet, "", nil, nil, 5000, susdeCurveFactoryParams())
+	require.NoError(t, err)
+
+	var h CurveFactoryPriceHandler
+	// maxDataAge = 0 disables the check
+	v, err := h.FetchValue(context.Background(), rdr, false, 0, &pricefeedservertypes.MarketToExchangePrices{}, 0)
+	require.NoError(t, err)
+	require.InDelta(t, 1.20, v, 1e-9)
 }

@@ -26,10 +26,15 @@ type YieldFiYusd struct{}
 func (r *YieldFiYusd) FetchValue(
 	ctx context.Context, reader *reader.Reader,
 	priceCache *pricefeedservertypes.MarketToExchangePrices,
+	maxDataAge time.Duration,
 ) (float64, error) {
+	fetchedAt := time.Now()
 	result, err := reader.ReadContract(ctx, YIELDFI_YUSD_CONTRACT, "exchangeRateScaled() returns (uint256)", nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to call exchangeRateScaled: %w", err)
+	}
+	if err := checkDataAge(fetchedAt, maxDataAge); err != nil {
+		return 0, fmt.Errorf("yieldfi-yusd: %w", err)
 	}
 
 	// Get yieldFi-yUSD exchange rate from contract (how much USD 1 yieldFi-yUSD is worth)
