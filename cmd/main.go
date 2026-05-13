@@ -57,15 +57,10 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Normal daemon mode - validate required flags
-		chainId := viper.GetString(flags.FlagChainID)
 		grpcAddr := viper.GetString(flags.FlagGRPC)
 		from := viper.GetString(flags.FlagFrom)
 		node := viper.GetString(flags.FlagNode)
 
-		if chainId == "" {
-			fmt.Printf("Error: --chain-id is required in reporter mode\n")
-			os.Exit(1)
-		}
 		if grpcAddr == "" {
 			fmt.Printf("Error: --grpc is required in reporter mode\n")
 			os.Exit(1)
@@ -82,6 +77,13 @@ var rootCmd = &cobra.Command{
 		// Set up signal handling for graceful shutdown
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
+
+		chainId, err := detectChainID(ctx, grpcAddr, node)
+		if err != nil {
+			fmt.Printf("Error: could not detect chain ID: %v\n", err)
+			os.Exit(1)
+		}
+		logger.Info("Detected chain ID", "chain_id", chainId)
 
 		// Pass prometheusPort and signal context to NewApp
 		appInstance := daemons.NewApp(ctx, logger, chainId, grpcAddr, homePath, prometheusPort)
@@ -113,7 +115,6 @@ func init() {
 	rootCmd.Flags().String(flags.FlagHome, appconfig.DefaultNodeHome, "Node home directory")
 	rootCmd.Flags().String(flags.FlagFrom, "", "Name of the key to use")
 	rootCmd.Flags().String(flags.FlagGRPC, "0.0.0.0:9090", "Address to listen on")
-	rootCmd.Flags().String(flags.FlagChainID, "layer", "Chain ID")
 	rootCmd.Flags().String(flags.FlagKeyringBackend, flags.DefaultKeyringBackend, "Select keyring's backend (os|file|kwallet|pass|test|memory)")
 	rootCmd.Flags().String(flags.FlagLogLevel, zerolog.InfoLevel.String(), "The logging level (trace|debug|info|warn|error|fatal|panic|disabled or '*:<level>,<key>:<level>')")
 	rootCmd.Flags().String(flags.FlagBroadcastMode, flags.BroadcastSync, "Transaction broadcasting mode (sync|async)")
@@ -139,7 +140,7 @@ func init() {
 	if err := rootCmd.MarkFlagRequired(flags.FlagHome); err != nil {
 		panic(err)
 	}
-	// Note: --from, --grpc, --chain-id, and --node are only required in normal mode, not test mode
+	// Note: --from, --grpc, and --node are only required in normal mode, not test mode
 	// We'll validate them in the Run function instead
 
 	// Try to load .env from current directory, or parent directory if not found.
