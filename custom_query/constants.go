@@ -70,7 +70,7 @@ var StaticEndpointTemplateConfig = map[string]*EndpointTemplate{
 		URLTemplate:    "https://lcd.osmosis.zone/osmosis/gamm/v1beta1/pools/{pool_id}",
 		Method:         "GET",
 		Timeout:        5000,
-		MaxDataAgeSecs: 600, // 10 minutes — uses native last_liquidity_update timestamp
+		MaxDataAgeSecs: 14400, // 4 hours — uses native last_liquidity_update timestamp
 	},
 	"uniswapV4ethereum": {
 		// docs: https://docs.uniswap.org/api/subgraph/overview — requires SUBGRAPH_API_KEY in the environment.

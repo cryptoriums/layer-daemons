@@ -11,7 +11,6 @@ import (
 	"github.com/tellor-io/layer-daemons/configs"
 	"github.com/tellor-io/layer-daemons/constants"
 	customquery "github.com/tellor-io/layer-daemons/custom_query"
-	"github.com/tellor-io/layer-daemons/exchange_common"
 	"github.com/tellor-io/layer-daemons/lib"
 	libtime "github.com/tellor-io/layer-daemons/lib/time"
 	handler "github.com/tellor-io/layer-daemons/pricefeed/client/queryhandler"
@@ -46,7 +45,9 @@ func runTestMode(homePath string, logger log.Logger, isolatedQueryID string) err
 		if !ok {
 			return fmt.Errorf("custom query id not found in config: %s", id)
 		}
-		if err := testCustomQuery(id, qc, logger); err != nil {
+		priceCache := pricefeedservertypes.NewMarketToExchangePrices(5 * time.Minute)
+		populateTestModePriceCacheFromExchanges(homePath, priceCache, logger)
+		if err := testCustomQuery(id, qc, priceCache, logger); err != nil {
 			return fmt.Errorf("custom query test failed: %w", err)
 		}
 		logger.Info("Isolated custom query test succeeded", "query_id", id)
@@ -83,8 +84,10 @@ func runTestMode(homePath string, logger log.Logger, isolatedQueryID string) err
 	// Test custom queries
 	if len(customQueries) > 0 {
 		logger.Info("Testing custom queries...")
+		priceCache := pricefeedservertypes.NewMarketToExchangePrices(5 * time.Minute)
+		populateTestModePriceCacheFromExchanges(homePath, priceCache, logger)
 		for queryId, queryConfig := range customQueries {
-			if err := testCustomQuery(queryId, queryConfig, logger); err != nil {
+			if err := testCustomQuery(queryId, queryConfig, priceCache, logger); err != nil {
 				logger.Error("Failed to test custom query", "query_id", queryId, "error", err)
 			}
 		}
@@ -292,12 +295,11 @@ func queryExchangeForMarket(
 	}
 }
 
-// testCustomQuery tests a single custom query configuration
-func testCustomQuery(queryId string, queryConfig customquery.QueryConfig, logger log.Logger) error {
+// testCustomQuery tests a single custom query configuration.
+// priceCache must already be populated (e.g. populateTestModePriceCacheFromExchanges) so handlers
+// that resolve USD via other markets use live exchange medians instead of synthetic values.
+func testCustomQuery(queryId string, queryConfig customquery.QueryConfig, priceCache *pricefeedservertypes.MarketToExchangePrices, logger log.Logger) error {
 	logger.Info("Testing custom query", "query_id", queryId)
-
-	priceCache := pricefeedservertypes.NewMarketToExchangePrices(5 * time.Minute)
-	seedTestModePriceCacheForCustomQueries(priceCache, logger)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -353,30 +355,89 @@ func logCustomQuerySourceResults(logger log.Logger, queryId string, fr *customqu
 	}
 }
 
-// seedTestModePriceCacheForCustomQueries injects synthetic medians so handlers that read
-// GetValidMedianPrices (e.g. SUSDE contract + USDT-via-Uniswap) work under --test without a live pricefeed.
-func seedTestModePriceCacheForCustomQueries(cache *pricefeedservertypes.MarketToExchangePrices, logger log.Logger) {
-	now := time.Now()
-	px := func(marketID uint32, n int, price uint64) []*serverdaemon.ExchangePrice {
-		out := make([]*serverdaemon.ExchangePrice, n)
-		for i := 0; i < n; i++ {
-			t := now
-			out[i] = &serverdaemon.ExchangePrice{
-				ExchangeId:     fmt.Sprintf("test-m%d-%d", marketID, i),
-				Price:          price,
-				LastUpdateTime: &t,
-			}
+// populateTestModePriceCacheFromExchanges fills the cache with the same per-exchange prices used
+// in market-param tests, so custom-query handlers that call GetValidMedianPrices see real sources.
+func populateTestModePriceCacheFromExchanges(
+	homePath string,
+	cache *pricefeedservertypes.MarketToExchangePrices,
+	logger log.Logger,
+) {
+	marketParams := configs.ReadMarketParamsConfigFile(homePath)
+	exchangeConfigs := configs.ReadExchangeQueryConfigFile(homePath)
+	var updates []*serverdaemon.MarketPriceUpdate
+	for i := range marketParams {
+		u := marketPriceUpdateFromLiveExchanges(&marketParams[i], exchangeConfigs, logger)
+		if u != nil {
+			updates = append(updates, u)
 		}
-		return out
 	}
-	// Exponents are -6 for these markets (see constants.StaticMarketParamsConfig): raw 1e6 ~= 1 USD.
-	cache.UpdatePrices([]*serverdaemon.MarketPriceUpdate{
-		{MarketId: exchange_common.USDEUSD_ID, ExchangePrices: px(exchange_common.USDEUSD_ID, 1, 1_000_000)},
-		{MarketId: exchange_common.USDTUSD_ID, ExchangePrices: px(exchange_common.USDTUSD_ID, 2, 1_000_000)},
-		{MarketId: exchange_common.ETHUSD_ID, ExchangePrices: px(exchange_common.ETHUSD_ID, 3, 3_000_000_000_000)}, // ~3000 USD
-		{MarketId: exchange_common.USDCUSD_ID, ExchangePrices: px(exchange_common.USDCUSD_ID, 2, 1_000_000)},
-		{MarketId: exchange_common.STETHUSD_ID, ExchangePrices: px(exchange_common.STETHUSD_ID, 1, 3_000_000_000_000)},
-		{MarketId: exchange_common.ATOMUSD_ID, ExchangePrices: px(exchange_common.ATOMUSD_ID, 3, 8_000_000)},
-	})
-	logger.Info("Seeded synthetic reference prices for --test custom queries (not live exchange data)")
+	if len(updates) > 0 {
+		cache.UpdatePrices(updates)
+	}
+	if len(updates) == 0 {
+		logger.Warn("No markets had enough live exchange prices to populate --test reference cache; custom queries that need USD-via may fail")
+	} else {
+		logger.Info("Populated --test price reference cache from live exchanges",
+			"markets_with_sufficient_exchanges", len(updates),
+			"total_market_params", len(marketParams),
+		)
+	}
+}
+
+// marketPriceUpdateFromLiveExchanges returns a single-market update when at least MinExchanges
+// configured sources succeed; otherwise nil.
+func marketPriceUpdateFromLiveExchanges(
+	marketParam *types.MarketParam,
+	exchangeConfigs map[types.ExchangeId]*types.ExchangeQueryConfig,
+	logger log.Logger,
+) *serverdaemon.MarketPriceUpdate {
+	var exchangeConfigJson types.ExchangeConfigJson
+	if err := json.Unmarshal([]byte(marketParam.ExchangeConfigJson), &exchangeConfigJson); err != nil {
+		logger.Debug("Skipping market for test cache: invalid exchange config JSON",
+			"pair", marketParam.Pair, "error", err)
+		return nil
+	}
+	now := time.Now()
+	var exchangePrices []*serverdaemon.ExchangePrice
+	for _, exchangeConfigJsonItem := range exchangeConfigJson.Exchanges {
+		exchangeId := exchangeConfigJsonItem.ExchangeName
+		exchangeDetails, exists := constants.StaticExchangeDetails[exchangeId]
+		if !exists {
+			continue
+		}
+		exchangeQueryConfig, hasConfig := exchangeConfigs[exchangeId]
+		if !hasConfig {
+			continue
+		}
+		result := queryExchangeForMarket(
+			exchangeId,
+			exchangeDetails,
+			*exchangeQueryConfig,
+			*marketParam,
+			exchangeConfigJsonItem,
+			logger,
+		)
+		if !result.Success {
+			continue
+		}
+		t := now
+		exchangePrices = append(exchangePrices, &serverdaemon.ExchangePrice{
+			ExchangeId:     exchangeId,
+			Price:          result.Price,
+			LastUpdateTime: &t,
+		})
+	}
+	if len(exchangePrices) < int(marketParam.MinExchanges) {
+		logger.Debug("Skipping market for test cache: insufficient live exchange prices",
+			"pair", marketParam.Pair,
+			"market_id", marketParam.Id,
+			"have", len(exchangePrices),
+			"need", marketParam.MinExchanges,
+		)
+		return nil
+	}
+	return &serverdaemon.MarketPriceUpdate{
+		MarketId:       marketParam.Id,
+		ExchangePrices: exchangePrices,
+	}
 }
