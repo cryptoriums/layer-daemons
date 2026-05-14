@@ -222,7 +222,7 @@ func fetchFromRpcEndpoint(
 	if err != nil {
 		return Result{
 			Err:        fmt.Errorf("failed to get RPC handler: %w", err),
-			EndpointID: rpchandler.Handler,
+			EndpointID: rpchandler.EndpointID,
 			MarketId:   rpchandler.MarketId,
 			SourceId:   rpchandler.SourceId,
 		}
@@ -232,7 +232,7 @@ func fetchFromRpcEndpoint(
 	if err != nil {
 		return Result{
 			Err:        fmt.Errorf("failed to fetch value: %w", err),
-			EndpointID: rpchandler.Handler,
+			EndpointID: rpchandler.EndpointID,
 			MarketId:   rpchandler.MarketId,
 			SourceId:   rpchandler.SourceId,
 		}
@@ -240,7 +240,7 @@ func fetchFromRpcEndpoint(
 
 	return Result{
 		Value:      value,
-		EndpointID: rpchandler.Handler,
+		EndpointID: rpchandler.EndpointID,
 		MarketId:   rpchandler.MarketId,
 		SourceId:   rpchandler.SourceId,
 	}
