@@ -238,7 +238,6 @@ func fetchFromRpcEndpoint(
 		}
 	}
 
-	fmt.Println("Successful Value Fetch:", value, rpchandler.EndpointID)
 	return Result{
 		Value:      value,
 		EndpointID: rpchandler.Handler,
