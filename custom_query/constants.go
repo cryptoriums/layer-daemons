@@ -180,6 +180,20 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 				},
 				MarketId: "USDN-USD",
 			},
+			{
+				EndpointType: "osmosis",
+				Handler:      "osmosis_pool_price_handler",
+				ResponsePath: []string{"pool"},
+				Params: map[string]string{
+					"pool_id":         "3061",
+					"target_token":    "ibc/0C39BD03B5C57A1753A9B73164705871A9B549F1A5226CFD7E39BE7BF73CF8CF",
+					"quote_token":     "ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4",
+					"target_decimals": "6",
+					"quote_decimals":  "6",
+				},
+				UsdViaID: exchange_common.USDCUSD_ID,
+				MarketId: "USDN-USD",
+			},
 		},
 	},
 	"59ae85cec665c779f18255dd4f3d97821e6a122691ee070b9a26888bc2a0e45a": {
