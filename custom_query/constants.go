@@ -258,7 +258,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 				MarketId:     "SUSDE-USD",
 			},
 			{
-				EndpointType: "coingecko",
+				EndpointType: "coingeckoPro",
 				ResponsePath: []string{"ethena-staked-usde", "usd"},
 				Params: map[string]string{
 					"coin_id": "ethena-staked-usde",
@@ -467,15 +467,15 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 				CombinedSources: map[string]string{
 					"ethereum":    "contract:ethereum",
 					"coinpaprika": "rpc:coinpaprika",
-					"coingecko":   "rpc:coingecko",
+					"coingeckoPro":   "rpc:coingeckoPro",
 					"uniswap":     "rpc:theGraphUniswapStylePool",
 				},
 				CombinedConfig: map[string]any{
 					"min_responses":             1,
 					"max_spread_percent":        100.0,
 					"coinpaprika_response_path": []string{"quotes", "USD", "price"},
-					"coingecko_response_path":   []string{"noon-usn", "usd"},
-					"coingecko_params": map[string]string{
+					"coingeckoPro_response_path":   []string{"noon-usn", "usd"},
+					"coingeckoPro_params": map[string]string{
 						"coin_id": "noon-usn",
 					},
 					"coinpaprika_params": map[string]string{
