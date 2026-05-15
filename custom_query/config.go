@@ -12,6 +12,11 @@ import (
 	rpcreader "github.com/tellor-io/layer-daemons/custom_query/rpc/rpc_reader"
 )
 
+const (
+	endpointTypeCombined = "combined"
+	endpointTypeContract = "contract"
+)
+
 type EndpointTemplate struct {
 	URLTemplate    string            `toml:"url_template"`
 	Query          string            `toml:"query"` // for POST requests
@@ -32,23 +37,23 @@ type Config struct {
 }
 
 type ContractHandler struct {
-	Handler     string
-	Reader      *contractreader.Reader
-	MarketId    string
-	SourceId    string
-	MaxDataAge  time.Duration
+	Handler    string
+	Reader     *contractreader.Reader
+	MarketId   string
+	SourceId   string
+	MaxDataAge time.Duration
 }
 
 type RpcHandler struct {
-	Handler     string
-	Reader      *rpcreader.Reader
-	Invert      bool
-	UsdViaID    uint32
-	Method      string
-	EndpointID  string
-	MarketId    string
-	SourceId    string
-	MaxDataAge  time.Duration
+	Handler    string
+	Reader     *rpcreader.Reader
+	Invert     bool
+	UsdViaID   uint32
+	Method     string
+	EndpointID string
+	MarketId   string
+	SourceId   string
+	MaxDataAge time.Duration
 }
 
 type CombinedHandler struct {
@@ -143,7 +148,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 		combinedReaders := make([]CombinedHandler, 0)
 		for _, endpoint := range query.Endpoints {
 			// Handle combined endpoints
-			if endpoint.EndpointType == "combined" {
+			if endpoint.EndpointType == endpointTypeCombined {
 				if endpoint.Handler == "" {
 					return nil, fmt.Errorf("combined endpoint missing handler for query %s", query.ID)
 				}
@@ -175,56 +180,56 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 									endpointType, sourceName, query.ID)
 							}
 
-						// Build RPC URL from template
-						url := template.URLTemplate
+							// Build RPC URL from template
+							url := template.URLTemplate
 
-						// Process source-specific parameters (e.g., "sushiswap_api_params" or "coingecko_api_params")
-						paramsKey := sourceName + "_params"
-						sourceParams := make(map[string]string)
-						if paramsRaw, exists := endpoint.CombinedConfig[paramsKey]; exists {
-							for key, value := range paramsRaw.(map[string]any) {
+							// Process source-specific parameters (e.g., "sushiswap_api_params" or "coingecko_api_params")
+							paramsKey := sourceName + "_params"
+							sourceParams := make(map[string]string)
+							if paramsRaw, exists := endpoint.CombinedConfig[paramsKey]; exists {
+								for key, value := range paramsRaw.(map[string]any) {
+									placeholder := fmt.Sprintf("{%s}", key)
+									v := fmt.Sprintf("%v", value)
+									url = strings.ReplaceAll(url, placeholder, v)
+									sourceParams[key] = v
+								}
+							}
+
+							// Replace API key if needed
+							url = strings.ReplaceAll(url, "{api_key}", template.ApiKey)
+
+							processedHeaders := make(map[string]string)
+							for key, value := range template.Headers {
+								if strings.EqualFold(value, "api_key") {
+									value = template.ApiKey
+								}
+								processedHeaders[key] = value
+							}
+
+							// Also substitute params into the query body (e.g. {pool_id} in GraphQL queries)
+							processedQuery := template.Query
+							for key, value := range sourceParams {
 								placeholder := fmt.Sprintf("{%s}", key)
-								v := fmt.Sprintf("%v", value)
-								url = strings.ReplaceAll(url, placeholder, v)
-								sourceParams[key] = v
+								processedQuery = strings.ReplaceAll(processedQuery, placeholder, value)
 							}
-						}
 
-						// Replace API key if needed
-						url = strings.ReplaceAll(url, "{api_key}", template.ApiKey)
-
-						processedHeaders := make(map[string]string)
-						for key, value := range template.Headers {
-							if strings.EqualFold(value, "api_key") {
-								value = template.ApiKey
-							}
-							processedHeaders[key] = value
-						}
-
-						// Also substitute params into the query body (e.g. {pool_id} in GraphQL queries)
-						processedQuery := template.Query
-						for key, value := range sourceParams {
-							placeholder := fmt.Sprintf("{%s}", key)
-							processedQuery = strings.ReplaceAll(processedQuery, placeholder, value)
-						}
-
-						// Get source-specific response path (e.g., "sushiswap_api_response_path")
-						var responsePath []string
-						respPathKey := sourceName + "_response_path"
-						if respPathRaw, exists := endpoint.CombinedConfig[respPathKey]; exists {
-							if respPath, ok := respPathRaw.([]string); ok {
-								responsePath = respPath
-							} else if respPathInterface, ok := respPathRaw.([]any); ok {
-								for _, p := range respPathInterface {
-									if str, ok := p.(string); ok {
-										responsePath = append(responsePath, str)
+							// Get source-specific response path (e.g., "sushiswap_api_response_path")
+							var responsePath []string
+							respPathKey := sourceName + "_response_path"
+							if respPathRaw, exists := endpoint.CombinedConfig[respPathKey]; exists {
+								if respPath, ok := respPathRaw.([]string); ok {
+									responsePath = respPath
+								} else if respPathInterface, ok := respPathRaw.([]any); ok {
+									for _, p := range respPathInterface {
+										if str, ok := p.(string); ok {
+											responsePath = append(responsePath, str)
+										}
 									}
 								}
 							}
-						}
 
-						reader, err := rpcreader.NewReader(url, template.Method, processedQuery,
-							processedHeaders, responsePath, template.Timeout, sourceParams)
+							reader, err := rpcreader.NewReader(url, template.Method, processedQuery,
+								processedHeaders, responsePath, template.Timeout, sourceParams)
 							if err != nil {
 								return nil, fmt.Errorf("failed to create RPC reader for combined source %s in query %s: %w",
 									sourceName, query.ID, err)
@@ -270,7 +275,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 				continue
 			}
 
-			if endpoint.EndpointType == "contract" {
+			if endpoint.EndpointType == endpointTypeContract {
 				if endpoint.Handler == "" || endpoint.Chain == "" {
 					return nil, fmt.Errorf("contract endpoint missing required fields (handler, chain) for query %s", query.ID)
 				}

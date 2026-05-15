@@ -6,9 +6,10 @@ import (
 	"time"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
-	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 )
 
 // detectChainID queries both the gRPC endpoint and the CometBFT RPC endpoint
@@ -37,7 +38,7 @@ func detectChainID(ctx context.Context, grpcAddr, nodeRPCAddr string) (string, e
 }
 
 func chainIDFromGRPC(ctx context.Context, grpcAddr string) (string, error) {
-	conn, err := grpc.DialContext(ctx, grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials())) //nolint:staticcheck
+	conn, err := grpc.DialContext(ctx, grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return "", fmt.Errorf("dial: %w", err)
 	}
@@ -59,7 +60,7 @@ func chainIDFromRPC(ctx context.Context, nodeRPCAddr string) (string, error) {
 
 	status, err := rpcClient.Status(ctx)
 	if err != nil {
-		return "", fmt.Errorf("Status: %w", err)
+		return "", fmt.Errorf("status: %w", err)
 	}
 
 	return status.NodeInfo.Network, nil

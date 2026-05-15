@@ -18,6 +18,7 @@ import (
 // deployment (see theGraphUniswapStylePool in constants). Uniswap subgraph semantics match pricing.ts:
 //   - token0Price = amount of token0 per 1 token1
 //   - token1Price = amount of token1 per 1 token0
+//
 // So "quote per target" is token1Price when target is token0, and token0Price when target is token1.
 //
 // Reader.Params:
