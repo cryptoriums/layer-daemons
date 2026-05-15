@@ -17,9 +17,8 @@ import (
 )
 
 func TestSFRXUSDHandler_Success(t *testing.T) {
-	totalAssets := big.NewInt(1050000000000000000)
-	totalSupply := big.NewInt(1000000000000000000)
-	rpcServer := createTestRPCServer(t, totalAssets, totalSupply)
+	pricePerShare := big.NewInt(1050000000000000000) // 1.05
+	rpcServer := createTestRPCServer(t, pricePerShare)
 	defer rpcServer.Close()
 
 	contractReader, err := contractreader.NewReader([]string{rpcServer.URL}, 10)
@@ -87,8 +86,7 @@ func TestSFRXUSDHandler_Success(t *testing.T) {
 	price, err := handler.FetchValue(ctx, contractReaders, rpcReaders, priceCache, 2, 50.0, 0)
 
 	require.NoError(t, err)
-	expectedPrice := (float64(totalAssets.Int64()) / float64(totalSupply.Int64())) * 1.02
-	require.Equal(t, expectedPrice, price)
+	assert.InDelta(t, 1.05*1.02, price, 1e-9)
 }
 
 func TestSFRXUSDHandler_MissingContractReader(t *testing.T) {
@@ -102,10 +100,9 @@ func TestSFRXUSDHandler_MissingContractReader(t *testing.T) {
 	assert.Contains(t, err.Error(), "ethereum contract reader not found")
 }
 
-func TestSFRXUSDHandler_ZeroTotalSupply(t *testing.T) {
-	totalAssets := big.NewInt(1000)
-	totalSupply := big.NewInt(0)
-	rpcServer := createTestRPCServer(t, totalAssets, totalSupply)
+func TestSFRXUSDHandler_ZeroPricePerShare(t *testing.T) {
+	pricePerShare := big.NewInt(0)
+	rpcServer := createTestRPCServer(t, pricePerShare)
 	defer rpcServer.Close()
 
 	contractReader, err := contractreader.NewReader([]string{rpcServer.URL}, 10)
@@ -119,13 +116,12 @@ func TestSFRXUSDHandler_ZeroTotalSupply(t *testing.T) {
 	_, err = handler.FetchValue(ctx, map[string]*contractreader.Reader{"ethereum": contractReader}, make(map[string]*rpcreader.Reader), priceCache, 2, 50.0, 0)
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid total supply: zero")
+	assert.Contains(t, err.Error(), "invalid pricePerShare: zero")
 }
 
 func TestSFRXUSDHandler_InsufficientSources(t *testing.T) {
-	totalAssets := big.NewInt(1000)
-	totalSupply := big.NewInt(1000)
-	rpcServer := createTestRPCServer(t, totalAssets, totalSupply)
+	pricePerShare := big.NewInt(1000000000000000000)
+	rpcServer := createTestRPCServer(t, pricePerShare)
 	defer rpcServer.Close()
 
 	contractReader, err := contractreader.NewReader([]string{rpcServer.URL}, 10)
@@ -158,7 +154,7 @@ func TestSFRXUSDHandler_InsufficientSources(t *testing.T) {
 }
 
 // Helpers
-func createTestRPCServer(t *testing.T, totalAssets, totalSupply *big.Int) *httptest.Server {
+func createTestRPCServer(t *testing.T, pricePerShare *big.Int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req map[string]interface{}
@@ -175,13 +171,9 @@ func createTestRPCServer(t *testing.T, totalAssets, totalSupply *big.Int) *httpt
 			}
 
 			var result string
-			// totalAssets() method ID: 0x01e1d114
-			// totalSupply() method ID: 0x18160ddd
 			switch methodID {
-			case "0x01e1d114": // totalAssets()
-				result = encodeBigInt(totalAssets)
-			case "0x18160ddd": // totalSupply()
-				result = encodeBigInt(totalSupply)
+			case "0x99530b06": // pricePerShare()
+				result = encodeBigInt(pricePerShare)
 			default:
 				result = "0x"
 			}
