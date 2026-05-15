@@ -45,6 +45,7 @@ const (
 
 [queries]
 {{- range $key, $query := .Queries }}
+    # {{ queryFeedComment $query }}
     [queries.{{ $key }}]
     id = "{{ $query.ID }}"
     aggregation_method = "{{ $query.AggregationMethod }}"
@@ -145,6 +146,22 @@ func tomlValue(v any) string {
 	}
 }
 
+func newConfigTomlTemplate() *template.Template {
+	tmpl := template.New("config").Funcs(template.FuncMap{
+		"formatParams":          formatParams,
+		"formatCombinedSources": formatCombinedSources,
+		"formatMapStringString": formatMapStringString,
+		"tomlValue":             tomlValue,
+		"hasSuffix":             strings.HasSuffix,
+		"queryFeedComment":      GenerateFeedComment,
+	})
+	tmpl, err := tmpl.Parse(defaultCustomQueryTomlTemplate)
+	if err != nil {
+		panic(err)
+	}
+	return tmpl
+}
+
 func GenerateDefaultConfigTomlString() bytes.Buffer {
 	// Create the combined config
 	combined := CombinedConfig{
@@ -154,22 +171,11 @@ func GenerateDefaultConfigTomlString() bytes.Buffer {
 	}
 
 	// Create a template with the helper function
-	tmpl := template.New("config").Funcs(template.FuncMap{
-		"formatParams":          formatParams,
-		"formatCombinedSources": formatCombinedSources,
-		"formatMapStringString": formatMapStringString,
-		"tomlValue":             tomlValue,
-		"hasSuffix":             strings.HasSuffix,
-	})
-
-	tmpl, err := tmpl.Parse(defaultCustomQueryTomlTemplate)
-	if err != nil {
-		panic(err)
-	}
+	tmpl := newConfigTomlTemplate()
 
 	// Execute the template with the combined config
 	var configToml bytes.Buffer
-	err = tmpl.Execute(&configToml, combined)
+	err := tmpl.Execute(&configToml, combined)
 	if err != nil {
 		panic(err)
 	}
@@ -259,18 +265,7 @@ func MergeCustomQueryConfig(homeDir, localDir, file string) error {
 	}
 
 	// Generate merged TOML using template
-	tmpl := template.New("config").Funcs(template.FuncMap{
-		"formatParams":          formatParams,
-		"formatCombinedSources": formatCombinedSources,
-		"formatMapStringString": formatMapStringString,
-		"tomlValue":             tomlValue,
-		"hasSuffix":             strings.HasSuffix,
-	})
-
-	tmpl, err = tmpl.Parse(defaultCustomQueryTomlTemplate)
-	if err != nil {
-		return fmt.Errorf("failed to parse template: %w", err)
-	}
+	tmpl := newConfigTomlTemplate()
 
 	var mergedToml bytes.Buffer
 	if err = tmpl.Execute(&mergedToml, combined); err != nil {

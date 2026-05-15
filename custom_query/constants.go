@@ -248,7 +248,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ID:                "03731257e35c49e44b267640126358e5decebdd8f18b5e8f229542ec86e318cf",
 		AggregationMethod: "median",
 		MaxSpreadPercent:  10.0,
-		MinResponses:      2,
+		MinResponses:      1,
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
@@ -256,45 +256,6 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 				Handler:      "susdeusd_handler",
 				Chain:        "ethereum",
 				MarketId:     "SUSDE-USD",
-			},
-			{
-				EndpointType: "coingeckoPro",
-				ResponsePath: []string{"ethena-staked-usde", "usd"},
-				Params: map[string]string{
-					"coin_id": "ethena-staked-usde",
-				},
-				MarketId: "SUSDE-USD",
-			},
-			{
-				EndpointType: "coinmarketcap",
-				ResponsePath: []string{"data", "29471", "quote", "USD", "price"},
-				Params: map[string]string{
-					"id": "29471",
-				},
-				MarketId: "SUSDE-USD",
-			},
-			{
-				EndpointType: "curveEthereumGetPools",
-				Handler:      "curve_factory_price",
-				Params: map[string]string{
-					"registry":            "factory-stable-ng",
-					"target_token":        "0x9d39a5de30e57443bff2a8307a4256c8797a3497",
-					"exclude_pools":       "0x4b5e827f4c0a1042272a11857a355da1f4ceebae",
-					"merge_get_pools_url": "https://api.curve.finance/api/getPools/ethereum/main",
-				},
-				MarketId: "SUSDE-USD",
-			},
-			{
-				EndpointType: "theGraphUniswapStylePool",
-				Handler:      "subgraph_uniswap_pool_pair_usd",
-				Params: map[string]string{
-					"subgraph_id":  "DiYPVdygkfjDWhbxGSqAQxwBKmfKnkWQojqeM2rkLb3G",
-					"pool_id":      "0xb20351bcf606dcc3525d2ed36760a86a5dec7423b77d41125bd4a416ba93448b",
-					"target_token": "0x9d39a5de30e57443bff2a8307a4256c8797a3497",
-					"quote_token":  "0xdac17f958d2ee523a2206206994597c13d831ec7",
-				},
-				UsdViaID: exchange_common.USDTUSD_ID,
-				MarketId: "SUSDE-USD",
 			},
 		},
 	},
@@ -441,16 +402,10 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "combined",
-				Handler:      "vyusd_price",
-				CombinedSources: map[string]string{
-					"ethereum": "contract:ethereum",
-				},
-				CombinedConfig: map[string]any{
-					"min_responses":      1,
-					"max_spread_percent": 100.0,
-				},
-				MarketId: "VYUSD-USD",
+				EndpointType: "contract",
+				Handler:      "yieldfi_vyusd_handler",
+				Chain:        "ethereum",
+				MarketId:     "VYUSD-USD",
 			},
 		},
 	},
