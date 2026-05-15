@@ -267,7 +267,7 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 		ResponseType:      "ufixed256x18",
 		Endpoints: []EndpointConfig{
 			{
-				EndpointType: "coingecko",
+				EndpointType: "coingeckoPro",
 				ResponsePath: []string{"tbtc", "usd"},
 				Params: map[string]string{
 					"coin_id": "tbtc",
