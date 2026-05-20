@@ -16,6 +16,7 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 	"github.com/spf13/viper"
 	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
+	"github.com/tellor-io/layer-daemons/lib/metrics"
 	"github.com/tellor-io/layer/utils"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
 	reportertypes "github.com/tellor-io/layer/x/reporter/types"
@@ -24,6 +25,7 @@ import (
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
@@ -304,6 +306,75 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 			c.trySend(ctx, TxChannelInfo{Msg: unbondMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0})
 
 		}
+	}
+}
+
+const balanceMonitorInterval = 30 * time.Second
+
+// MonitorBalancePeriodically queries wallet and staking balances every 30 seconds
+// and emits telemetry metrics so operators can alert on low balances.
+func (c *Client) MonitorBalancePeriodically(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	c.logger.Info("Balance monitor started", "interval", balanceMonitorInterval)
+
+	// Query immediately on startup, then tick every 30 seconds.
+	c.updateBalanceMetrics(ctx)
+
+	ticker := time.NewTicker(balanceMonitorInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			c.logger.Info("Balance monitor stopped")
+			return
+		case <-ticker.C:
+			c.updateBalanceMetrics(ctx)
+		}
+	}
+}
+
+// updateBalanceMetrics queries balances and emits telemetry gauges.
+func (c *Client) updateBalanceMetrics(ctx context.Context) {
+	qCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
+	defer cancel()
+
+	// Wallet balance
+	balResp, err := c.BankClient.Balance(qCtx, &banktypes.QueryBalanceRequest{
+		Address: c.accAddr.String(),
+		Denom:   "loya",
+	})
+	if err != nil {
+		c.logger.Error("balance monitor: failed to query wallet balance", "error", err)
+	} else {
+		walletLoya := balResp.Balance.Amount.Int64()
+		metrics.SetGaugeWithLabels("daemon_wallet_balance_loya",
+			float32(walletLoya),
+			metrics.Label{Name: "address", Value: c.accAddr.String()},
+		)
+		c.logger.Debug("balance monitor: wallet balance", "loya", walletLoya)
+	}
+
+	// Staking (delegated) balance
+	delResp, err := c.StakingClient.DelegatorDelegations(qCtx, &stakingtypes.QueryDelegatorDelegationsRequest{
+		DelegatorAddr: c.accAddr.String(),
+		Pagination:    &query.PageRequest{Limit: 100},
+	})
+	if err != nil {
+		c.logger.Error("balance monitor: failed to query staking delegations", "error", err)
+	} else {
+		var stakingLoya int64
+		for _, del := range delResp.DelegationResponses {
+			if !del.Balance.Amount.IsNil() {
+				stakingLoya += del.Balance.Amount.Int64()
+			}
+		}
+		metrics.SetGaugeWithLabels("daemon_staking_balance_loya",
+			float32(stakingLoya),
+			metrics.Label{Name: "address", Value: c.accAddr.String()},
+		)
+		c.logger.Debug("balance monitor: staking balance", "loya", stakingLoya)
 	}
 }
 
