@@ -32,7 +32,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 const defaultGas = uint64(240000)
@@ -60,7 +59,6 @@ type Client struct {
 	// Query clients
 	OracleQueryClient oracletypes.QueryClient
 	BankClient        banktypes.QueryClient
-	StakingClient     stakingtypes.QueryClient
 
 	ReporterClient  reportertypes.QueryClient
 	CmtService      cmtservice.ServiceClient
@@ -161,7 +159,6 @@ func (c *Client) Start(
 	// Initialize the query clients. These are used to query the Cosmos gRPC query services.
 	c.OracleQueryClient = oracletypes.NewQueryClient(conn)
 	c.BankClient = banktypes.NewQueryClient(conn)
-	c.StakingClient = stakingtypes.NewQueryClient(conn)
 	c.ReporterClient = reportertypes.NewQueryClient(conn)
 	c.GlobalfeeClient = globalfeetypes.NewQueryClient(conn)
 	c.CmtService = cmtservice.NewServiceClient(conn)
@@ -358,9 +355,6 @@ func StartReporterDaemonTaskLoop(
 
 	wg.Add(1)
 	go client.AutoUnbondStakePeriodically(ctx, wg)
-
-	wg.Add(1)
-	go client.MonitorBalancePeriodically(ctx, wg)
 
 	if client.refreshGasEstimatesInterval > 0 {
 		wg.Add(1)
