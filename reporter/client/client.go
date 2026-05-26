@@ -157,7 +157,6 @@ func (c *Client) Start(
 
 	// Initialize the query clients. These are used to query the Cosmos gRPC query services.
 	c.OracleQueryClient = oracletypes.NewQueryClient(conn)
-	c.BankClient = banktypes.NewQueryClient(conn)
 	c.GlobalfeeClient = globalfeetypes.NewQueryClient(conn)
 	c.CmtService = cmtservice.NewServiceClient(conn)
 	c.AuthClient = authtypes.NewQueryClient(conn)
