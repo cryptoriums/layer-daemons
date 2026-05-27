@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/viper"
 	"github.com/tellor-io/layer-daemons/flags"
 	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
+	bridgetypes "github.com/tellor-io/layer/x/bridge/types"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
 	reportertypes "github.com/tellor-io/layer/x/reporter/types"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/query"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	bridgetypes "github.com/tellor-io/layer/x/bridge/types"
 )
 
 const (
@@ -338,7 +338,7 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 	}
 }
 
-func shouldSkipAutoUnbond(reporterStake math.LegacyDec, maxStakePercentage math.LegacyDec, unbondAmount math.Int) bool {
+func shouldSkipAutoUnbond(reporterStake, maxStakePercentage math.LegacyDec, unbondAmount math.Int) bool {
 	if !maxStakePercentage.GT(math.LegacyZeroDec()) {
 		return false
 	}
@@ -400,14 +400,16 @@ func (c *Client) AutoBridgeWalletExcessPeriodically(ctx context.Context, wg *syn
 		amountToBridge := walletBal.Sub(keepAmt).Sub(gasReserve)
 
 		if !amountToBridge.IsPositive() {
-			c.logger.Info("auto balance-to-keep: wallet below threshold, nothing to bridge",
+			c.logger.Info(
+				"auto balance-to-keep: wallet below threshold, nothing to bridge",
 				"wallet_loya", walletBal.String(),
 				"keep_loya", keepAmt.String(),
 			)
 			continue
 		}
 
-		c.logger.Info("auto balance-to-keep: bridging excess",
+		c.logger.Info(
+			"auto balance-to-keep: bridging excess",
 			"wallet_loya", walletBal.String(),
 			"keep_loya", keepAmt.String(),
 			"bridge_amount_loya", amountToBridge.String(),

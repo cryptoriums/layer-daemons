@@ -3,11 +3,11 @@ package client
 import (
 	"testing"
 
-	"cosmossdk.io/math"
-
 	"github.com/stretchr/testify/require"
 	bridgetypes "github.com/tellor-io/layer/x/bridge/types"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
+
+	"cosmossdk.io/math"
 )
 
 func TestNormalizeAutoBalanceEthAddr(t *testing.T) {
