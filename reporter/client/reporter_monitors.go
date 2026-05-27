@@ -229,6 +229,7 @@ func (c *Client) MonitorForTippedQueries(ctx context.Context, wg *sync.WaitGroup
 }
 
 func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
 	freqVar := os.Getenv("WITHDRAW_FREQUENCY")
 	if freqVar == "" {
 		freqVar = "43200" // default to being 12 hours or 43200 seconds
@@ -240,10 +241,20 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 	}
 
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
 		if valAddr == "" {
 			fmt.Println("Returning from Withdraw Monitor due to no validator address env variable was found")
-			time.Sleep(time.Duration(frequency) * time.Second)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Duration(frequency) * time.Second):
+			}
 			continue
 		}
 
@@ -251,9 +262,13 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 			SelectorAddress:  c.accAddr.String(),
 			ValidatorAddress: valAddr,
 		}
-		c.txChan <- TxChannelInfo{Msg: withdrawMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0}
+		c.trySend(ctx, TxChannelInfo{Msg: withdrawMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0})
 
-		time.Sleep(time.Duration(frequency) * time.Second)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(frequency) * time.Second):
+		}
 	}
 }
 
@@ -279,7 +294,7 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 	unbondAmount := math.NewInt(int64(amount))
 	valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
 	if valAddr == "" {
-		fmt.Println("Returning from Withdraw Monitor due to no validator address env variable was found")
+		fmt.Println("Returning from Auto Unbond Monitor due to no validator address env variable was found")
 		return
 	}
 	for {
@@ -317,7 +332,7 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 				ValidatorAddress: valAddr,
 				Amount:           sdk.NewCoin("loya", unbondAmount),
 			}
-			c.txChan <- TxChannelInfo{Msg: unbondMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0}
+			c.trySend(ctx, TxChannelInfo{Msg: unbondMsg, isBridge: false, NumRetries: 0, QueryMetaId: 0})
 
 		}
 	}
