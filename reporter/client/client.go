@@ -138,6 +138,7 @@ func (c *Client) Start(
 	)
 
 	c.MarketParams = marketParams
+	RegisterPriceGuardMarketParams(marketParams)
 	c.MarketToExchange = marketToExchange
 
 	c.TokenDepositsCache = tokenDepositsCache
