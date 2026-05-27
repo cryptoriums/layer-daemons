@@ -4,16 +4,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/spf13/viper"
 	globalfeetypes "github.com/strangelove-ventures/globalfee/x/globalfee/types"
 	customquery "github.com/tellor-io/layer-daemons/custom_query"
-	"github.com/tellor-io/layer-daemons/flags"
+	daemonflags "github.com/tellor-io/layer-daemons/flags"
 	pricefeedtypes "github.com/tellor-io/layer-daemons/pricefeed/client/types"
 	pricefeedservertypes "github.com/tellor-io/layer-daemons/server/types/pricefeed"
 	tokenbridgetypes "github.com/tellor-io/layer-daemons/server/types/token_bridge"
@@ -122,7 +124,7 @@ func NewClient(logger log.Logger, valGasMin string) *Client {
 
 func (c *Client) Start(
 	ctx context.Context,
-	flags flags.DaemonFlags,
+	flags daemonflags.DaemonFlags,
 	grpcAddress string,
 	grpcClient daemontypes.GrpcClient,
 	marketParams []pricefeedtypes.MarketParam,
@@ -211,6 +213,9 @@ func (c *Client) Start(
 	c.refreshGasEstimatesInterval = viper.GetDuration("refresh-gas-estimates-interval")
 
 	if autoUnbondingFrequency > 0 {
+		if autoUnbondingFrequency > 21 {
+			return fmt.Errorf("auto-unbonding-frequency must be between 1 and 21 days when set, got: %d", autoUnbondingFrequency)
+		}
 		if autoUnbondingAmount == 0 {
 			return fmt.Errorf("auto-unbonding-amount must be greater than 0 when auto-unbonding-frequency is set")
 		}
@@ -245,15 +250,21 @@ func (c *Client) Start(
 	}
 
 	// Read and validate auto-balance-to-keep configuration
-	autoBalanceToKeep := viper.GetUint64("auto-balance-to-keep")
-	autoBalanceEthAddr := strings.TrimPrefix(viper.GetString("auto-balance-eth-addr"), "0x")
+	autoBalanceToKeep := viper.GetUint64(daemonflags.FlagAutoBalanceToKeep)
 	if autoBalanceToKeep > 0 {
+		autoBalanceEthAddr, err := normalizeAutoBalanceEthAddr(viper.GetString(daemonflags.FlagAutoBalanceBridgeToEthAddr))
+		if err != nil {
+			return err
+		}
 		if autoBalanceEthAddr == "" {
-			return fmt.Errorf("auto-balance-eth-addr is required when auto-balance-to-keep > 0")
+			return fmt.Errorf("%s is required when %s > 0", daemonflags.FlagAutoBalanceBridgeToEthAddr, daemonflags.FlagAutoBalanceToKeep)
+		}
+		if _, _, err := parseAutoBalanceExecutionTime(viper.GetString(daemonflags.FlagAutoBalanceExecutionTime)); err != nil {
+			return err
 		}
 		c.logger.Info("Auto balance-to-keep enabled",
 			"balance_to_keep_loya", autoBalanceToKeep,
-			"execution_time", viper.GetString("auto-balance-execution-time"),
+			"execution_time", viper.GetString(daemonflags.FlagAutoBalanceExecutionTime),
 			"eth_addr", "0x"+autoBalanceEthAddr,
 		)
 	} else {
@@ -312,7 +323,7 @@ func (c *Client) Start(
 func StartReporterDaemonTaskLoop(
 	client *Client,
 	ctx context.Context,
-	flags flags.DaemonFlags,
+	flags daemonflags.DaemonFlags,
 	wg *sync.WaitGroup,
 ) {
 	reporterCreated := false
@@ -475,6 +486,30 @@ func (c *Client) trySend(ctx context.Context, info TxChannelInfo) bool {
 		c.logger.Debug("trySend: context canceled, dropping tx")
 		return false
 	}
+}
+
+func normalizeAutoBalanceEthAddr(addr string) (string, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "", nil
+	}
+	if !common.IsHexAddress(addr) {
+		return "", fmt.Errorf("%s must be a valid Ethereum address, got: %s", daemonflags.FlagAutoBalanceBridgeToEthAddr, addr)
+	}
+	return strings.TrimPrefix(common.HexToAddress(addr).Hex(), "0x"), nil
+}
+
+func parseAutoBalanceExecutionTime(executionTime string) (int, int, error) {
+	parts := strings.SplitN(executionTime, ":", 2)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("invalid %s, expected HH:MM, got: %s", daemonflags.FlagAutoBalanceExecutionTime, executionTime)
+	}
+	hour, errH := strconv.Atoi(parts[0])
+	minute, errM := strconv.Atoi(parts[1])
+	if errH != nil || errM != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return 0, 0, fmt.Errorf("invalid %s value, expected HH:MM in UTC, got: %s", daemonflags.FlagAutoBalanceExecutionTime, executionTime)
+	}
+	return hour, minute, nil
 }
 
 // Stop stops the reporter client gracefully

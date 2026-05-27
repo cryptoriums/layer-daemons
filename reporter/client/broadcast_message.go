@@ -222,13 +222,13 @@ func (c *Client) BroadcastTxMsgToChain(ctx context.Context) {
 				txCtx, cancel := context.WithTimeout(ctx, txBroadcastTimeout)
 				defer cancel()
 
-				if !txInfo.isBridge {
-					_, err := c.sendTx(txCtx, txInfo.QueryMetaId, false, txInfo.Msg)
+				if txInfo.isBridge && isBridgeDepositReportMsg(txInfo.Msg) {
+					c.HandleBridgeDepositTxInChannel(txCtx, txInfo)
+				} else {
+					_, err := c.sendTx(txCtx, txInfo.QueryMetaId, txInfo.isBridge, txInfo.Msg)
 					if err != nil {
 						c.logger.Error(fmt.Sprintf("Error sending tx: %v", err))
 					}
-				} else {
-					c.HandleBridgeDepositTxInChannel(txCtx, txInfo)
 				}
 			}(obj)
 
@@ -236,4 +236,9 @@ func (c *Client) BroadcastTxMsgToChain(ctx context.Context) {
 			c.logger.Info(fmt.Sprintf("Tx in Channel: %d", len(c.txChan)))
 		}
 	}
+}
+
+func isBridgeDepositReportMsg(msg interface{}) bool {
+	_, ok := msg.(*oracletypes.MsgSubmitValue)
+	return ok
 }

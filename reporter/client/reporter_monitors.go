@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/shirou/gopsutil/v3/process"
 	"github.com/spf13/viper"
+	"github.com/tellor-io/layer-daemons/flags"
 	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
 	oracletypes "github.com/tellor-io/layer/x/oracle/types"
 	reportertypes "github.com/tellor-io/layer/x/reporter/types"
@@ -305,9 +306,8 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 				}
 			}
 
-			maxStakeAbleToWithdraw := reporterStake.Mul(maxStakePercentage)
-
-			if maxStakeAbleToWithdraw.LT(math.LegacyNewDecFromInt(unbondAmount)) {
+			if shouldSkipAutoUnbond(reporterStake, maxStakePercentage, unbondAmount) {
+				maxStakeAbleToWithdraw := reporterStake.Mul(maxStakePercentage)
 				c.logger.Info("Not enough stake to withdraw", "reporterStake", reporterStake, "maxStakeAbleToWithdraw", maxStakeAbleToWithdraw)
 				continue
 			}
@@ -323,31 +323,33 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 	}
 }
 
+func shouldSkipAutoUnbond(reporterStake math.LegacyDec, maxStakePercentage math.LegacyDec, unbondAmount math.Int) bool {
+	if !maxStakePercentage.GT(math.LegacyZeroDec()) {
+		return false
+	}
+	return reporterStake.Mul(maxStakePercentage).LT(math.LegacyNewDecFromInt(unbondAmount))
+}
+
 // AutoBridgeWalletExcessPeriodically watches the wallet balance once per day at the configured
 // UTC time. Whenever the balance exceeds --auto-balance-to-keep (loya), the excess (minus a
-// 1 TRB gas reserve) is bridged to the Ethereum address supplied by --auto-balance-eth-addr.
+// 1 TRB gas reserve) is bridged to the Ethereum address supplied by --auto-balance-bridge-to-eth-addr.
 func (c *Client) AutoBridgeWalletExcessPeriodically(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	balanceToKeep := viper.GetUint64("auto-balance-to-keep")
+	balanceToKeep := viper.GetUint64(flags.FlagAutoBalanceToKeep)
 	if balanceToKeep == 0 {
 		c.logger.Info("Auto balance-to-keep is disabled")
 		return
 	}
 
-	ethAddr := strings.TrimPrefix(viper.GetString("auto-balance-eth-addr"), "0x")
-	executionTime := viper.GetString("auto-balance-execution-time")
-
-	// Parse HH:MM
-	parts := strings.SplitN(executionTime, ":", 2)
-	if len(parts) != 2 {
-		c.logger.Error("invalid auto-balance-execution-time, expected HH:MM", "value", executionTime)
+	ethAddr, err := normalizeAutoBalanceEthAddr(viper.GetString(flags.FlagAutoBalanceBridgeToEthAddr))
+	if err != nil {
+		c.logger.Error("invalid auto-balance bridge address", "error", err)
 		return
 	}
-	hour, errH := strconv.Atoi(parts[0])
-	minute, errM := strconv.Atoi(parts[1])
-	if errH != nil || errM != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
-		c.logger.Error("invalid auto-balance-execution-time value", "value", executionTime)
+	hour, minute, err := parseAutoBalanceExecutionTime(viper.GetString(flags.FlagAutoBalanceExecutionTime))
+	if err != nil {
+		c.logger.Error("invalid auto-balance execution time", "error", err)
 		return
 	}
 
@@ -402,7 +404,7 @@ func (c *Client) AutoBridgeWalletExcessPeriodically(ctx context.Context, wg *syn
 			Recipient: ethAddr,
 			Amount:    sdk.NewCoin("loya", amountToBridge),
 		}
-		c.txChan <- TxChannelInfo{Msg: msg, isBridge: true, NumRetries: 0, QueryMetaId: 0}
+		c.trySend(ctx, TxChannelInfo{Msg: msg, isBridge: true, NumRetries: 0, QueryMetaId: 0})
 	}
 }
 

@@ -138,9 +138,9 @@ func init() {
 	rootCmd.Flags().Duration("refresh-gas-estimates-interval", 12*time.Hour, "Interval for resetting cached gas estimates and gas-adjustment levels (<=0 disables)")
 
 	// Auto-bridge: keep wallet at a fixed balance by bridging the excess to Ethereum
-	rootCmd.Flags().Uint64("auto-balance-to-keep", 0, "Keep this amount of loya in the wallet; bridge any excess to Ethereum at --auto-balance-execution-time (0 = disabled)")
-	rootCmd.Flags().String("auto-balance-execution-time", "00:00", "UTC time to execute the auto-balance bridge (HH:MM, e.g. '03:00')")
-	rootCmd.Flags().String("auto-balance-bridge-to-eth-addr", "", "Ethereum address to bridge excess tokens to (required when auto-balance-to-keep > 0)")
+	rootCmd.Flags().Uint64(daemonflags.FlagAutoBalanceToKeep, 0, "Keep this amount of loya in the wallet; bridge any excess to Ethereum at --auto-balance-execution-time (0 = disabled)")
+	rootCmd.Flags().String(daemonflags.FlagAutoBalanceExecutionTime, "00:00", "UTC time to execute the auto-balance bridge (HH:MM, e.g. '03:00')")
+	rootCmd.Flags().String(daemonflags.FlagAutoBalanceBridgeToEthAddr, "", "Ethereum address to bridge excess tokens to (required when auto-balance-to-keep > 0)")
 
 	// Marking required flags
 	if err := rootCmd.MarkFlagRequired(flags.FlagHome); err != nil {
