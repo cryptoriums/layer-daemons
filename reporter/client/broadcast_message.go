@@ -145,7 +145,7 @@ func (c *Client) GenerateAndBroadcastSpotPriceReport(ctx context.Context, qd []b
 }
 
 func (c *Client) HandleBridgeDepositTxInChannel(ctx context.Context, data TxChannelInfo) {
-	resp, err := c.sendTx(ctx, 0, data.Msg) // 0 = no queryMeta tracking for bridge transactions
+	resp, err := c.sendTx(ctx, 0, true, data.Msg) // 0 = no queryMeta tracking for bridge transactions
 	if err != nil {
 		c.logger.Error("submitting deposit report transaction",
 			"error", err,
@@ -163,7 +163,7 @@ func (c *Client) HandleBridgeDepositTxInChannel(ctx context.Context, data TxChan
 
 		// For unordered transactions, we don't need to handle concurrent transaction limits
 
-		c.txChan <- data
+		c.trySend(ctx, data)
 
 		return
 	}
@@ -194,28 +194,46 @@ func (c *Client) HandleBridgeDepositTxInChannel(ctx context.Context, data TxChan
 	c.logger.Info(fmt.Sprintf("Response from bridge tx report: %v", resp.TxResult))
 }
 
-func (c *Client) BroadcastTxMsgToChain() {
+func (c *Client) BroadcastTxMsgToChain(ctx context.Context) {
 	semaphore := make(chan struct{}, maxConcurrentTxs)
-	for obj := range c.txChan {
-		// submit transaction in goroutine without waiting for completion
-		go func(txInfo TxChannelInfo) {
-			semaphore <- struct{}{}
-			defer func() { <-semaphore }()
-
-			ctx, cancel := context.WithTimeout(context.Background(), txBroadcastTimeout)
-			defer cancel()
-
-			if !txInfo.isBridge {
-				_, err := c.sendTx(ctx, txInfo.QueryMetaId, txInfo.Msg)
-				if err != nil {
-					c.logger.Error(fmt.Sprintf("Error sending tx: %v", err))
-				}
-			} else {
-				c.HandleBridgeDepositTxInChannel(ctx, txInfo)
+	for {
+		select {
+		case <-ctx.Done():
+			c.logger.Debug("BroadcastTxMsgToChain: context canceled")
+			return
+		case obj, ok := <-c.txChan:
+			if !ok {
+				c.logger.Debug("BroadcastTxMsgToChain: tx channel closed")
+				return
 			}
-		}(obj)
 
-		// log channel status and immediately continue to next transaction
-		c.logger.Info(fmt.Sprintf("Tx in Channel: %d", len(c.txChan)))
+			c.broadcastWg.Add(1)
+			// submit transaction in goroutine without waiting for completion
+			go func(txInfo TxChannelInfo) {
+				defer c.broadcastWg.Done()
+
+				select {
+				case semaphore <- struct{}{}:
+					defer func() { <-semaphore }()
+				case <-ctx.Done():
+					return
+				}
+
+				txCtx, cancel := context.WithTimeout(ctx, txBroadcastTimeout)
+				defer cancel()
+
+				if !txInfo.isBridge {
+					_, err := c.sendTx(txCtx, txInfo.QueryMetaId, false, txInfo.Msg)
+					if err != nil {
+						c.logger.Error(fmt.Sprintf("Error sending tx: %v", err))
+					}
+				} else {
+					c.HandleBridgeDepositTxInChannel(txCtx, txInfo)
+				}
+			}(obj)
+
+			// log channel status and immediately continue to next transaction
+			c.logger.Info(fmt.Sprintf("Tx in Channel: %d", len(c.txChan)))
+		}
 	}
 }
