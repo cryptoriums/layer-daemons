@@ -23,6 +23,7 @@ import (
 	"cosmossdk.io/math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/bech32"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
@@ -32,6 +33,23 @@ const (
 	defaultTxTimeout    = 10 * time.Second
 	defaultRetryDelay   = 200 * time.Millisecond
 )
+
+// toValidatorOperator converts a tellor1xxx bech32 address to its tellorvaloper1xxx
+// counterpart by re-encoding the same underlying bytes with the validator prefix.
+func toValidatorOperator(walletAddr string) string {
+	if walletAddr == "" {
+		return ""
+	}
+	_, addrBytes, err := bech32.DecodeAndConvert(walletAddr)
+	if err != nil {
+		return ""
+	}
+	valoperAddr, err := bech32.ConvertAndEncode("tellorvaloper", addrBytes)
+	if err != nil {
+		return ""
+	}
+	return valoperAddr
+}
 
 func (c *Client) MonitorCyclelistQuery(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
@@ -224,9 +242,9 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 			c.logger.Debug("WithdrawAndStakeEarnedRewardsPeriodically: context canceled, exiting")
 			return
 		case <-ticker.C:
-			valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
+			valAddr := toValidatorOperator(c.accAddr.String())
 			if valAddr == "" {
-				fmt.Println("Returning from Withdraw Monitor due to no validator address env variable was found")
+				c.logger.Error("could not derive validator operator address from reporter address")
 				continue
 			}
 
@@ -259,9 +277,9 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 		panic(err)
 	}
 	unbondAmount := math.NewInt(int64(amount))
-	valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
+	valAddr := toValidatorOperator(c.accAddr.String())
 	if valAddr == "" {
-		fmt.Println("Returning from Withdraw Monitor due to no validator address env variable was found")
+		c.logger.Error("could not derive validator operator address from reporter address, auto-unbonding disabled")
 		return
 	}
 	for {

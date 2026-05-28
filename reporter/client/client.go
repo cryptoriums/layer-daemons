@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -44,6 +45,22 @@ var (
 )
 
 var mutex = &sync.RWMutex{}
+
+// keyringReader returns an io.Reader for the keyring passphrase.
+// If KEYRING_PASSWORD_FILE is set, it reads the password from that file.
+// Otherwise it falls back to stdin for interactive use.
+func keyringReader() io.Reader {
+	if passFile := os.Getenv("KEYRING_PASSWORD_FILE"); passFile != "" {
+		data, err := os.ReadFile(passFile)
+		if err == nil {
+			pass := strings.TrimSpace(string(data))
+			if pass != "" {
+				return strings.NewReader(pass + "\n" + pass + "\n" + pass + "\n")
+			}
+		}
+	}
+	return os.Stdin
+}
 
 type TxChannelInfo struct {
 	Msg         sdk.Msg
@@ -261,7 +278,7 @@ func (c *Client) Start(
 	encodingConfig := CreateEncodingConfig()
 	c.cosmosCtx = c.cosmosCtx.WithCodec(encodingConfig.Codec).WithInterfaceRegistry(encodingConfig.InterfaceRegistry).WithTxConfig(encodingConfig.TxConfig)
 
-	kr, err := keyring.New("", kb, homeDir, os.Stdin, encodingConfig.Codec)
+	kr, err := keyring.New("", kb, homeDir, keyringReader(), encodingConfig.Codec)
 	if err != nil {
 		return err
 	}

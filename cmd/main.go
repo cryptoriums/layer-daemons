@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,7 +32,13 @@ var rootCmd = &cobra.Command{
 	Short: "Run reporter daemon",
 	Long:  "reporterd is a daemon that runs the reporter that interacts with the layer chain.",
 	Run: func(cmd *cobra.Command, args []string) {
-		homePath := viper.GetString(flags.FlagHome)
+		// Prefer REPORTER_HOME over viper "home" because AutomaticEnv maps home -> shell $HOME.
+		homePath := os.Getenv("REPORTER_HOME")
+		if homePath == "" {
+			homePath = viper.GetString(flags.FlagHome)
+		}
+		// Keep viper in sync for downstream consumers reading "home".
+		viper.Set(flags.FlagHome, homePath)
 		logLevelstr := viper.GetString(flags.FlagLogLevel)
 		configs.WriteDefaultPricefeedExchangeToml(homePath)
 		configs.WriteDefaultMarketParamsToml(homePath)
@@ -58,6 +65,10 @@ var rootCmd = &cobra.Command{
 		from := viper.GetString(flags.FlagFrom)
 		node := viper.GetString(flags.FlagNode)
 
+		if homePath == "" {
+			fmt.Printf("Error: --home (or REPORTER_HOME env var) is required\n")
+			os.Exit(1)
+		}
 		if chainId == "" {
 			fmt.Printf("Error: --chain-id is required in reporter mode\n")
 			os.Exit(1)
@@ -129,12 +140,8 @@ func init() {
 	rootCmd.Flags().String("auto-unbonding-max-stake-percentage", "0.0", "Maximum percentage of stake to unbond each unbonding transaction (0 = disabled, 1.0 = 100%). If unbonding amount exceeds this percentage, we will skip the unbonding transaction until it exceeds this percentage again.")
 	rootCmd.Flags().Duration("refresh-gas-estimates-interval", 12*time.Hour, "Interval for resetting cached gas estimates and gas-adjustment levels (<=0 disables)")
 
-	// Marking required flags
-	if err := rootCmd.MarkFlagRequired(flags.FlagHome); err != nil {
-		panic(err)
-	}
-	// Note: --from, --grpc, --chain-id, and --node are only required in normal mode, not test mode
-	// We'll validate them in the Run function instead
+	// Note: --home, --from, --grpc, --chain-id, and --node are validated in Run so that
+	// env vars (REPORTER_HOME, FROM, GRPC_ADDR, NODE, CHAIN_ID) are also accepted.
 
 	// Try to load .env from current directory, or parent directory if not found.
 	// .env file is optional — allows the daemon to run without one if env vars are set another way.
@@ -145,4 +152,8 @@ func init() {
 	if err := viper.BindPFlags(rootCmd.Flags()); err != nil {
 		panic(err)
 	}
+
+	// Allow all flags to be set via environment variables.
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+	viper.AutomaticEnv()
 }
