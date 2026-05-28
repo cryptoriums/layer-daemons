@@ -18,6 +18,7 @@ import (
 	"github.com/tellor-io/layer-daemons/configs"
 	customquery "github.com/tellor-io/layer-daemons/custom_query"
 	daemonflags "github.com/tellor-io/layer-daemons/flags"
+
 	// need this for the address bech32 prefix config
 	_ "github.com/tellor-io/layer/app/config"
 
@@ -32,8 +33,8 @@ var rootCmd = &cobra.Command{
 	Short: "Run reporter daemon",
 	Long:  "reporterd is a daemon that runs the reporter that interacts with the layer chain.",
 	Run: func(cmd *cobra.Command, args []string) {
-		// Prefer REPORTER_HOME over viper "home" because AutomaticEnv maps home -> shell $HOME.
-		homePath := os.Getenv("REPORTER_HOME")
+		// Prefer LAYER_HOME over viper "home" because AutomaticEnv maps home -> shell $HOME.
+		homePath := os.Getenv("LAYER_HOME")
 		if homePath == "" {
 			homePath = viper.GetString(flags.FlagHome)
 		}
@@ -66,7 +67,7 @@ var rootCmd = &cobra.Command{
 		node := viper.GetString(flags.FlagNode)
 
 		if homePath == "" {
-			fmt.Printf("Error: --home (or REPORTER_HOME env var) is required\n")
+			fmt.Printf("Error: --home (or LAYER_HOME env var) is required\n")
 			os.Exit(1)
 		}
 		if chainId == "" {
@@ -141,7 +142,7 @@ func init() {
 	rootCmd.Flags().Duration("refresh-gas-estimates-interval", 12*time.Hour, "Interval for resetting cached gas estimates and gas-adjustment levels (<=0 disables)")
 
 	// Note: --home, --from, --grpc, --chain-id, and --node are validated in Run so that
-	// env vars (REPORTER_HOME, FROM, GRPC_ADDR, NODE, CHAIN_ID) are also accepted.
+	// env vars (LAYER_HOME, FROM, GRPC_ADDR, NODE, CHAIN_ID) are also accepted.
 
 	// Try to load .env from current directory, or parent directory if not found.
 	// .env file is optional — allows the daemon to run without one if env vars are set another way.
