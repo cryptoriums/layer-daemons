@@ -35,6 +35,132 @@ const (
 
 func (c *Client) MonitorCyclelistQuery(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	// Try to use event-driven detection (reacts within milliseconds of each new block).
+	// Falls back to 200ms ticker polling if the WebSocket subscription fails.
+	blockCh, unsubscribe, err := c.subscribeNewBlocks(ctx)
+	if err != nil {
+		c.logger.Warn("block subscription failed, falling back to polling", "error", err)
+		c.monitorCyclelistQueryPolling(ctx)
+		return
+	}
+	defer unsubscribe()
+	c.logger.Info("MonitorCyclelistQuery: using event-driven block subscription")
+
+	// Fallback ticker: if no block event is received for 2s (e.g. slow node), poll anyway.
+	const blockEventTimeout = 2 * time.Second
+	fallback := time.NewTimer(blockEventTimeout)
+	defer fallback.Stop()
+
+	prevQueryData := []byte{}
+
+	checkCycle := func() {
+		queryCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
+		querydata, querymeta, err := c.CurrentQuery(queryCtx)
+		cancel()
+
+		if err != nil || querymeta == nil {
+			c.logger.Error("query failed", "error", err)
+			return
+		}
+
+		mutex.Lock()
+		hasCommited := commitedIds[querymeta.Id]
+		mutex.Unlock()
+		if bytes.Equal(querydata, prevQueryData) || hasCommited {
+			return
+		}
+
+		txCtx, cancel := context.WithTimeout(ctx, defaultTxTimeout)
+		done := make(chan struct{})
+
+		c.logger.Info(fmt.Sprintf("starting to generate spot price report at %d", time.Now().Unix()))
+		go func() {
+			defer close(done)
+			if err := c.GenerateAndBroadcastSpotPriceReport(txCtx, querydata, querymeta); err != nil {
+				c.logger.Error("report generation failed", "error", err)
+			}
+		}()
+
+		select {
+		case <-done:
+			cancel()
+		case <-txCtx.Done():
+			c.logger.Error(fmt.Sprintf("report generation timed out at %d", time.Now().Unix()))
+			cancel()
+		}
+
+		prevQueryData = querydata
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-blockCh:
+			if !ok {
+				// Channel closed; fall back to polling for the rest of this session.
+				c.logger.Warn("block subscription channel closed, falling back to polling")
+				c.monitorCyclelistQueryPolling(ctx)
+				return
+			}
+			fallback.Reset(blockEventTimeout)
+			checkCycle()
+		case <-fallback.C:
+			// No block event received within timeout; check anyway and reset.
+			fallback.Reset(blockEventTimeout)
+			checkCycle()
+		}
+	}
+}
+
+// subscribeNewBlocks subscribes to CometBFT NewBlock events over WebSocket.
+// Returns a channel that receives one value per block, an unsubscribe func, and any error.
+func (c *Client) subscribeNewBlocks(ctx context.Context) (<-chan struct{}, func(), error) {
+	if c.rpcClient == nil {
+		return nil, func() {}, fmt.Errorf("rpc client not initialized")
+	}
+	if !c.rpcClient.IsRunning() {
+		if err := c.rpcClient.Start(); err != nil {
+			return nil, func() {}, fmt.Errorf("starting rpc client for WebSocket: %w", err)
+		}
+	}
+	subscriber := fmt.Sprintf("reporter-cycle-monitor-%d", time.Now().UnixNano())
+	eventCh, err := c.rpcClient.Subscribe(ctx, subscriber, "tm.event='NewBlock'")
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("subscribing to NewBlock events: %w", err)
+	}
+
+	blockCh := make(chan struct{}, 1)
+	go func() {
+		defer close(blockCh)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-eventCh:
+				if !ok {
+					return
+				}
+				// Non-blocking send: if the consumer is busy processing the previous block,
+				// skip this event rather than queuing up a backlog.
+				select {
+				case blockCh <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
+	unsubscribe := func() {
+		_ = c.rpcClient.Unsubscribe(ctx, subscriber, "tm.event='NewBlock'")
+	}
+	return blockCh, unsubscribe, nil
+}
+
+// monitorCyclelistQueryPolling is the fallback ticker-based implementation used when
+// the WebSocket block subscription is unavailable.
+func (c *Client) monitorCyclelistQueryPolling(ctx context.Context) {
 	prevQueryData := []byte{}
 	ticker := time.NewTicker(defaultRetryDelay)
 	defer ticker.Stop()

@@ -83,6 +83,7 @@ type Client struct {
 	// Resources that need cleanup
 	grpcConn    *grpc.ClientConn
 	grpcClient  daemontypes.GrpcClient
+	rpcClient   *rpchttp.HTTP // direct reference for WebSocket subscriptions
 	wg          sync.WaitGroup
 	broadcastWg sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
 	stopOnce    sync.Once
@@ -256,6 +257,7 @@ func (c *Client) Start(
 	if err != nil {
 		return fmt.Errorf("failed to create RPC client: %w", err)
 	}
+	c.rpcClient = rpcClient
 	c.cosmosCtx = c.cosmosCtx.WithClient(rpcClient)
 
 	encodingConfig := CreateEncodingConfig()
