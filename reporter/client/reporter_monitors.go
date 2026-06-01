@@ -23,17 +23,56 @@ import (
 	"cosmossdk.io/math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/bech32"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 const (
-	defaultQueryTimeout = 10 * time.Second
-	defaultTxTimeout    = 10 * time.Second
-	defaultRetryDelay   = 200 * time.Millisecond
-	maxRetryDelay       = 30 * time.Second
+	defaultQueryTimeout          = 10 * time.Second
+	defaultTxTimeout             = 10 * time.Second
+	defaultRetryDelay            = 200 * time.Millisecond
+	maxRetryDelay                = 30 * time.Second
+	reportersValidatorAddressEnv = "REPORTERS_VALIDATOR_ADDRESS"
 )
+
+// toValidatorOperator converts a tellor1xxx bech32 address to its tellorvaloper1xxx
+// counterpart by re-encoding the same underlying bytes with the validator prefix.
+func toValidatorOperator(walletAddr string) string {
+	if walletAddr == "" {
+		return ""
+	}
+	_, addrBytes, err := bech32.DecodeAndConvert(walletAddr)
+	if err != nil {
+		return ""
+	}
+	valoperAddr, err := bech32.ConvertAndEncode("tellorvaloper", addrBytes)
+	if err != nil {
+		return ""
+	}
+	return valoperAddr
+}
+
+func validatorOperatorAddress(reporterAddr string) (string, string, error) {
+	configuredAddr := strings.TrimSpace(os.Getenv(reportersValidatorAddressEnv))
+	if configuredAddr != "" {
+		prefix, _, err := bech32.DecodeAndConvert(configuredAddr)
+		if err != nil {
+			return "", "", fmt.Errorf("%s is not a valid bech32 address: %w", reportersValidatorAddressEnv, err)
+		}
+		if prefix != "tellorvaloper" {
+			return "", "", fmt.Errorf("%s must use tellorvaloper prefix, got %q", reportersValidatorAddressEnv, prefix)
+		}
+		return configuredAddr, reportersValidatorAddressEnv, nil
+	}
+
+	valAddr := toValidatorOperator(reporterAddr)
+	if valAddr == "" {
+		return "", "", fmt.Errorf("could not derive validator operator address from reporter address")
+	}
+	return valAddr, "derived", nil
+}
 
 func (c *Client) MonitorCyclelistQuery(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
@@ -147,14 +186,19 @@ func (c *Client) MonitorForTippedQueries(ctx context.Context, wg *sync.WaitGroup
 			return
 		case <-ticker.C:
 			queryCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
-			res, err := c.OracleQueryClient.TippedQueriesForDaemon(queryCtx, &oracletypes.QueryTippedQueriesForDaemonRequest{
-				Pagination: &query.PageRequest{
-					Offset: 0,
-				},
+			var res *oracletypes.QueryTippedQueriesForDaemonResponse
+			err := c.withGRPCFallback(queryCtx, "tipped queries lookup", func() error {
+				var err error
+				res, err = c.OracleQueryClient.TippedQueriesForDaemon(queryCtx, &oracletypes.QueryTippedQueriesForDaemonRequest{
+					Pagination: &query.PageRequest{
+						Offset: 0,
+					},
+				})
+				return err
 			})
 			cancel()
 
-			if err != nil || len(res.Queries) == 0 {
+			if err != nil || res == nil || len(res.Queries) == 0 {
 				if err != nil {
 					// Exponential backoff on error
 					retryDelay *= 2
@@ -172,7 +216,7 @@ func (c *Client) MonitorForTippedQueries(ctx context.Context, wg *sync.WaitGroup
 				ticker.Reset(retryDelay)
 			}
 
-			status, err := c.cosmosCtx.Client.Status(ctx)
+			status, err := c.Status(ctx)
 			if err != nil {
 				continue
 			}
@@ -247,9 +291,9 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 		default:
 		}
 
-		valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
-		if valAddr == "" {
-			fmt.Println("Returning from Withdraw Monitor due to no validator address env variable was found")
+		valAddr, valAddrSource, err := validatorOperatorAddress(c.accAddr.String())
+		if err != nil {
+			c.logger.Error("could not resolve validator operator address", "error", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -257,6 +301,7 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 			}
 			continue
 		}
+		c.logger.Info("Using validator operator address for reward withdrawal", "validator_address", valAddr, "source", valAddrSource)
 
 		withdrawMsg := &reportertypes.MsgWithdrawTip{
 			SelectorAddress:  c.accAddr.String(),
@@ -292,19 +337,25 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 		panic(err)
 	}
 	unbondAmount := math.NewInt(int64(amount))
-	valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
-	if valAddr == "" {
-		fmt.Println("Returning from Auto Unbond Monitor due to no validator address env variable was found")
+	valAddr, valAddrSource, err := validatorOperatorAddress(c.accAddr.String())
+	if err != nil {
+		c.logger.Error("could not resolve validator operator address, auto-unbonding disabled", "error", err)
 		return
 	}
+	c.logger.Info("Using validator operator address for auto-unbonding", "validator_address", valAddr, "source", valAddrSource)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			c.logger.Info("Trying to unbond stake")
-			reporterData, err := c.ReporterClient.SelectionsTo(ctx, &reportertypes.QuerySelectionsToRequest{
-				ReporterAddress: c.accAddr.String(),
+			var reporterData *reportertypes.QuerySelectionsToResponse
+			err := c.withGRPCFallback(ctx, "reporter selections lookup", func() error {
+				var err error
+				reporterData, err = c.ReporterClient.SelectionsTo(ctx, &reportertypes.QuerySelectionsToRequest{
+					ReporterAddress: c.accAddr.String(),
+				})
+				return err
 			})
 			if err != nil {
 				c.logger.Error("error getting reporter data", "error", err)
@@ -384,9 +435,14 @@ func (c *Client) AutoBridgeWalletExcessPeriodically(ctx context.Context, wg *syn
 
 		c.logger.Info("Auto balance-to-keep: checking wallet balance")
 
-		balResp, err := c.BankClient.Balance(ctx, &banktypes.QueryBalanceRequest{
-			Address: c.accAddr.String(),
-			Denom:   "loya",
+		var balResp *banktypes.QueryBalanceResponse
+		err = c.withGRPCFallback(ctx, "wallet balance lookup", func() error {
+			var err error
+			balResp, err = c.BankClient.Balance(ctx, &banktypes.QueryBalanceRequest{
+				Address: c.accAddr.String(),
+				Denom:   "loya",
+			})
+			return err
 		})
 		if err != nil {
 			c.logger.Error("auto balance-to-keep: failed to query wallet balance", "error", err)

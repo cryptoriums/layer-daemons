@@ -42,6 +42,10 @@ func RegisterTelemetryIfEnabled(logger log.Logger, homePath string, prometheusPo
 	logger.Info("configPath", "path", configPath)
 	file, err := os.ReadFile(configPath)
 	if err != nil {
+		if os.IsNotExist(err) {
+			logger.Info("app.toml not found, skipping telemetry registration")
+			return
+		}
 		logger.Error("failed to read app.toml for telemetry", "error", err)
 		panic(fmt.Sprintf("failed to read app.toml for telemetry: %v", err))
 	}
