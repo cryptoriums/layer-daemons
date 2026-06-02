@@ -85,11 +85,12 @@ type Client struct {
 	gasEstimator                *gasEstimateState
 
 	// Resources that need cleanup
-	grpcConn    *grpc.ClientConn
-	grpcClient  daemontypes.GrpcClient
-	wg          sync.WaitGroup
-	broadcastWg sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
-	stopOnce    sync.Once
+	grpcConn         *grpc.ClientConn
+	grpcClient       daemontypes.GrpcClient
+	remoteSignerConn *grpc.ClientConn // non-nil when --remote-signer-addr is set
+	wg               sync.WaitGroup
+	broadcastWg      sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
+	stopOnce         sync.Once
 }
 
 // GetUniqueUnorderedTimeout generates a unique timeout timestamp for unordered transactions.
@@ -293,21 +294,34 @@ func (c *Client) Start(
 	encodingConfig := CreateEncodingConfig()
 	c.cosmosCtx = c.cosmosCtx.WithCodec(encodingConfig.Codec).WithInterfaceRegistry(encodingConfig.InterfaceRegistry).WithTxConfig(encodingConfig.TxConfig)
 
-	kr, err := keyring.New("", kb, homeDir, os.Stdin, encodingConfig.Codec)
-	if err != nil {
-		return err
+	remoteSignerAddr := viper.GetString("remote-signer-addr")
+	if remoteSignerAddr != "" {
+		// Use remote signer for tx signing — no local private key needed.
+		c.logger.Info("Using remote signer for tx signing", "addr", remoteSignerAddr)
+		kr, signerAccAddr, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr)
+		if err != nil {
+			return fmt.Errorf("failed to initialise remote signer keyring: %w", err)
+		}
+		// Store the connection so it gets closed during shutdown.
+		c.remoteSignerConn = signerConn
+		c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
+		c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(signerAccAddr)
+	} else {
+		kr, err := keyring.New("", kb, homeDir, os.Stdin, encodingConfig.Codec)
+		if err != nil {
+			return err
+		}
+		record, err := kr.Key(keyName)
+		if err != nil {
+			return err
+		}
+		addr, err := record.GetAddress()
+		if err != nil {
+			return err
+		}
+		c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
+		c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(addr)
 	}
-	record, err := kr.Key(keyName)
-	if err != nil {
-		return err
-	}
-	addr, err := record.GetAddress()
-	if err != nil {
-		return err
-	}
-
-	c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
-	c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(addr)
 	c.accAddr = c.cosmosCtx.GetFromAddress()
 
 	StartReporterDaemonTaskLoop(
@@ -530,6 +544,13 @@ func (c *Client) Stop() {
 		if c.grpcConn != nil && c.grpcClient != nil {
 			if err := c.grpcClient.CloseConnection(c.grpcConn); err != nil {
 				c.logger.Error("Failed to close gRPC connection", "error", err)
+			}
+		}
+
+		// Close remote signer connection if used
+		if c.remoteSignerConn != nil {
+			if err := c.remoteSignerConn.Close(); err != nil {
+				c.logger.Error("Failed to close remote signer connection", "error", err)
 			}
 		}
 
