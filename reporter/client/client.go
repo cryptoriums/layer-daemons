@@ -189,6 +189,8 @@ type Client struct {
 	rpcMu       sync.RWMutex
 	rpcManager  *rpcEndpointManager
 
+	remoteSignerConn *grpc.ClientConn // non-nil when --remote-signer-addr is set
+
 	wg          sync.WaitGroup
 	broadcastWg sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
 	stopOnce    sync.Once
@@ -394,41 +396,54 @@ func (c *Client) Start(
 	encodingConfig := CreateEncodingConfig()
 	c.cosmosCtx = c.cosmosCtx.WithCodec(encodingConfig.Codec).WithInterfaceRegistry(encodingConfig.InterfaceRegistry).WithTxConfig(encodingConfig.TxConfig)
 
-	keyringInput, usingPasswordFile, err := keyringReader()
-	if err != nil {
-		return err
-	}
-	if err := validateKeyringBackendConfig(kb, usingPasswordFile); err != nil {
-		return err
-	}
-	c.logger.Info("Using keyring backend", "backend", kb)
-	kr, err := keyring.New("", kb, homeDir, keyringInput, encodingConfig.Codec)
-	if err != nil {
-		if usingPasswordFile {
-			return fmt.Errorf("%w: could not initialize keyring backend %q: %w", ErrKeyringPasswordFile, kb, err)
+	remoteSignerAddr := viper.GetString("remote-signer-addr")
+	if remoteSignerAddr != "" {
+		// Use remote signer for tx signing — no local private key needed.
+		c.logger.Info("Using remote signer for tx signing", "addr", remoteSignerAddr)
+		kr, signerAccAddr, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr)
+		if err != nil {
+			return fmt.Errorf("failed to initialise remote signer keyring: %w", err)
 		}
-		return fmt.Errorf("could not initialize keyring backend %q: %w", kb, err)
-	}
-	record, err := kr.Key(keyName)
-	if err != nil {
-		if usingPasswordFile {
-			return fmt.Errorf("%w: account %q could not be read from keyring backend %q: %w", ErrKeyringPasswordFile, keyName, kb, err)
-		}
-		return fmt.Errorf("account %q could not be read from keyring backend %q: %w", keyName, kb, err)
-	}
-	addr, err := record.GetAddress()
-	if err != nil {
-		return err
-	}
-	if usingPasswordFile {
-		if err := validateKeyringAccountUnlocked(kr, keyName); err != nil {
+		// Store the connection so it gets closed during shutdown.
+		c.remoteSignerConn = signerConn
+		c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
+		c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(signerAccAddr)
+	} else {
+		keyringInput, usingPasswordFile, err := keyringReader()
+		if err != nil {
 			return err
 		}
-		c.logger.Info("KEYRING_PASSWORD_FILE unlocked keyring account successfully", "account", keyName, "address", addr.String())
+		if err := validateKeyringBackendConfig(kb, usingPasswordFile); err != nil {
+			return err
+		}
+		c.logger.Info("Using keyring backend", "backend", kb)
+		kr, err := keyring.New("", kb, homeDir, keyringInput, encodingConfig.Codec)
+		if err != nil {
+			if usingPasswordFile {
+				return fmt.Errorf("%w: could not initialize keyring backend %q: %w", ErrKeyringPasswordFile, kb, err)
+			}
+			return fmt.Errorf("could not initialize keyring backend %q: %w", kb, err)
+		}
+		record, err := kr.Key(keyName)
+		if err != nil {
+			if usingPasswordFile {
+				return fmt.Errorf("%w: account %q could not be read from keyring backend %q: %w", ErrKeyringPasswordFile, keyName, kb, err)
+			}
+			return fmt.Errorf("account %q could not be read from keyring backend %q: %w", keyName, kb, err)
+		}
+		addr, err := record.GetAddress()
+		if err != nil {
+			return err
+		}
+		if usingPasswordFile {
+			if err := validateKeyringAccountUnlocked(kr, keyName); err != nil {
+				return err
+			}
+			c.logger.Info("KEYRING_PASSWORD_FILE unlocked keyring account successfully", "account", keyName, "address", addr.String())
+		}
+		c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
+		c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(addr)
 	}
-
-	c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
-	c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(addr)
 	c.accAddr = c.cosmosCtx.GetFromAddress()
 
 	StartReporterDaemonTaskLoop(
@@ -905,6 +920,13 @@ func (c *Client) Stop() {
 		if c.grpcConn != nil && c.grpcClient != nil {
 			if err := c.grpcClient.CloseConnection(c.grpcConn); err != nil {
 				c.logger.Error("Failed to close gRPC connection", "error", err)
+			}
+		}
+
+		// Close remote signer connection if used
+		if c.remoteSignerConn != nil {
+			if err := c.remoteSignerConn.Close(); err != nil {
+				c.logger.Error("Failed to close remote signer connection", "error", err)
 			}
 		}
 
