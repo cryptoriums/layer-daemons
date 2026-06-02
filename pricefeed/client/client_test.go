@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"github.com/tellor-io/layer-daemons/appconfig"
 	pricefeed_constants "github.com/tellor-io/layer-daemons/constants"
 	daemonflags "github.com/tellor-io/layer-daemons/flags"
 	"github.com/tellor-io/layer-daemons/mocks"
@@ -23,7 +22,6 @@ import (
 	daemonserver "github.com/tellor-io/layer-daemons/server"
 	servertypes "github.com/tellor-io/layer-daemons/server/types/daemons"
 	pricefeed_types "github.com/tellor-io/layer-daemons/server/types/pricefeed"
-	"github.com/tellor-io/layer-daemons/testutil/appoptions"
 	"github.com/tellor-io/layer-daemons/testutil/client"
 	"github.com/tellor-io/layer-daemons/testutil/constants"
 	daemontestutils "github.com/tellor-io/layer-daemons/testutil/daemons"
@@ -281,7 +279,6 @@ func TestStart_InvalidConfig(t *testing.T) {
 func TestStop(t *testing.T) {
 	// Setup daemon and grpc servers.
 	daemonFlags := daemonflags.GetDefaultDaemonFlags()
-	appFlags := appconfig.GetFlagValuesFromOptions(appoptions.GetDefaultTestAppOptions("", nil))
 
 	// Configure and run daemon server.
 	daemonServer := daemonserver.NewServer(
@@ -294,26 +291,70 @@ func TestStop(t *testing.T) {
 		pricefeed_types.NewMarketToExchangePrices(5 * time.Second),
 	)
 
-	defer daemonServer.Stop()
-	go daemonServer.Start()
+	daemonServerErrCh := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				switch v := r.(type) {
+				case error:
+					daemonServerErrCh <- v
+				case string:
+					daemonServerErrCh <- errors.New(v)
+				default:
+					daemonServerErrCh <- fmt.Errorf("daemon server panic: %v", v)
+				}
+				return
+			}
+			daemonServerErrCh <- nil
+		}()
+
+		daemonServer.Start()
+	}()
+
+	defer func() {
+		daemonServer.Stop()
+
+		select {
+		case err := <-daemonServerErrCh:
+			if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				require.NoError(t, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for daemon server shutdown")
+		}
+	}()
 
 	// Create a gRPC server running on the default port and attach the mock prices query response.
 	grpcServer := grpc.NewServer()
 	// pricetypes.RegisterQueryServer(grpcServer, &pricesQueryServer)
+	ls, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	grpcAddress := ls.Addr().String()
 
-	// Start gRPC server with cleanup.
-	defer grpcServer.Stop()
+	serveErrCh := make(chan error, 1)
 	go func() {
-		ls, err := net.Listen("tcp", appFlags.GrpcAddress)
-		require.NoError(t, err)
-		err = grpcServer.Serve(ls)
-		require.NoError(t, err)
+		serveErrCh <- grpcServer.Serve(ls)
+	}()
+
+	// Ensure the serving goroutine is fully drained before the test exits.
+	defer func() {
+		grpcServer.Stop()
+		_ = ls.Close()
+
+		select {
+		case serveErr := <-serveErrCh:
+			if serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
+				require.NoError(t, serveErr)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for grpc server shutdown")
+		}
 	}()
 
 	client := StartNewClient(
 		grpc_util.Ctx,
 		daemonFlags,
-		appFlags.GrpcAddress,
+		grpcAddress,
 		log.NewNopLogger(),
 		&daemontypes.GrpcClientImpl{},
 		[]types.MarketParam{},

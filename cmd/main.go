@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,7 +32,13 @@ var rootCmd = &cobra.Command{
 	Short: "Run reporter daemon",
 	Long:  "reporterd is a daemon that runs the reporter that interacts with the layer chain.",
 	Run: func(cmd *cobra.Command, args []string) {
-		homePath := viper.GetString(flags.FlagHome)
+		// Prefer LAYER_HOME over viper "home" because AutomaticEnv maps home -> shell $HOME.
+		homePath := os.Getenv("LAYER_HOME")
+		if homePath == "" {
+			homePath = viper.GetString(flags.FlagHome)
+		}
+		// Keep viper in sync for downstream consumers reading "home".
+		viper.Set(flags.FlagHome, homePath)
 		logLevelstr := viper.GetString(flags.FlagLogLevel)
 		configs.WriteDefaultPricefeedExchangeToml(homePath)
 		configs.WriteDefaultMarketParamsToml(homePath)
@@ -45,33 +52,44 @@ var rootCmd = &cobra.Command{
 
 		// Check if test mode is enabled
 		if testMode {
-			if err := runTestMode(homePath, logger); err != nil {
+			if err := runTestMode(homePath, logger, testQueryID); err != nil {
 				fmt.Printf("Test mode failed: %v\n", err)
 				os.Exit(1)
 			}
 			os.Exit(0)
 		}
-
-		// Normal daemon mode - validate required flags
-		chainId := viper.GetString(flags.FlagChainID)
-		grpcAddr := viper.GetString(flags.FlagGRPC)
-		from := viper.GetString(flags.FlagFrom)
-		node := viper.GetString(flags.FlagNode)
-
-		if chainId == "" {
-			fmt.Printf("Error: --chain-id is required in reporter mode\n")
+		if testQueryID != "" {
+			fmt.Fprintf(os.Stderr, "Error: --test-query-id requires --test\n")
 			os.Exit(1)
 		}
-		if grpcAddr == "" {
-			fmt.Printf("Error: --grpc is required in reporter mode\n")
+
+		// Normal daemon mode - validate required flags
+		grpcCfg, err := grpcEndpointsFromEnvOrFlag(viper.GetString(flags.FlagGRPC))
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		from := viper.GetString(flags.FlagFrom)
+		rpcCfg, err := rpcEndpointsFromEnvOrFlag(viper.GetString(flags.FlagNode))
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if homePath == "" {
+			fmt.Printf("Error: --home (or LAYER_HOME env var) is required\n")
+			os.Exit(1)
+		}
+		if len(grpcCfg.Endpoints) == 0 {
+			fmt.Printf("Error: %s or --%s is required in reporter mode\n", envGRPCNodes, flags.FlagGRPC)
 			os.Exit(1)
 		}
 		if from == "" {
 			fmt.Printf("Error: --from is required in reporter mode\n")
 			os.Exit(1)
 		}
-		if node == "" {
-			fmt.Printf("Error: --node is required in reporter mode\n")
+		if len(rpcCfg.Endpoints) == 0 {
+			fmt.Printf("Error: %s or --%s is required in reporter mode\n", envRPCNodes, flags.FlagNode)
 			os.Exit(1)
 		}
 
@@ -79,8 +97,30 @@ var rootCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
+		chainId, grpcAddr, selectedRPCNode, err := detectChainIDFromEndpoints(ctx, grpcCfg.Endpoints, rpcCfg.Endpoints)
+		if err != nil {
+			fmt.Printf("Error: could not detect chain ID: %v\n", err)
+			os.Exit(1)
+		}
+		logger.Info(
+			"Detected chain ID",
+			"chain_id", chainId,
+			"grpc_endpoint", grpcAddr,
+			"grpc_source", grpcCfg.Source,
+			"rpc_endpoint", selectedRPCNode,
+			"rpc_source", rpcCfg.Source,
+		)
+
 		// Pass prometheusPort and signal context to NewApp
-		appInstance := daemons.NewApp(ctx, logger, chainId, grpcAddr, homePath, prometheusPort)
+		appInstance := daemons.NewApp(
+			ctx,
+			logger,
+			chainId,
+			moveEndpointToFront(grpcCfg.Endpoints, grpcAddr),
+			moveEndpointToFront(rpcCfg.Endpoints, selectedRPCNode),
+			homePath,
+			prometheusPort,
+		)
 
 		// Wait for signal
 		<-ctx.Done()
@@ -94,6 +134,7 @@ var rootCmd = &cobra.Command{
 var (
 	prometheusPort int
 	testMode       bool
+	testQueryID    string
 )
 
 func main() {
@@ -108,7 +149,6 @@ func init() {
 	rootCmd.Flags().String(flags.FlagHome, appconfig.DefaultNodeHome, "Node home directory")
 	rootCmd.Flags().String(flags.FlagFrom, "", "Name of the key to use")
 	rootCmd.Flags().String(flags.FlagGRPC, "0.0.0.0:9090", "Address to listen on")
-	rootCmd.Flags().String(flags.FlagChainID, "layer", "Chain ID")
 	rootCmd.Flags().String(flags.FlagKeyringBackend, flags.DefaultKeyringBackend, "Select keyring's backend (os|file|kwallet|pass|test|memory)")
 	rootCmd.Flags().String(flags.FlagLogLevel, zerolog.InfoLevel.String(), "The logging level (trace|debug|info|warn|error|fatal|panic|disabled or '*:<level>,<key>:<level>')")
 	rootCmd.Flags().String(flags.FlagBroadcastMode, flags.BroadcastSync, "Transaction broadcasting mode (sync|async)")
@@ -123,18 +163,20 @@ func init() {
 
 	// Test mode flag
 	rootCmd.Flags().BoolVar(&testMode, "test", false, "Test mode: verify price feed configurations and calculate medians without starting daemon")
+	rootCmd.Flags().StringVar(&testQueryID, "test-query-id", "", "With --test, only run this custom query id (64-char hex); skips exchange/market tests. Exits non-zero if the query fails.")
 	// Automatic Unbonding flags
-	rootCmd.Flags().Uint32("auto-unbonding-frequency", 0, "Enable automatic unbonding every N days (0 = disabled, 1 - 21 days = valid")
+	rootCmd.Flags().Uint32("auto-unbonding-frequency", 0, "Enable automatic unbonding every N days (0 = disabled, 1 - 21 days = valid)")
 	rootCmd.Flags().Uint32("auto-unbonding-amount", 0, "Amount of tokens in loya to unbond each unbonding transaction (0 = disabled)")
 	rootCmd.Flags().String("auto-unbonding-max-stake-percentage", "0.0", "Maximum percentage of stake to unbond each unbonding transaction (0 = disabled, 1.0 = 100%). If unbonding amount exceeds this percentage, we will skip the unbonding transaction until it exceeds this percentage again.")
 	rootCmd.Flags().Duration("refresh-gas-estimates-interval", 12*time.Hour, "Interval for resetting cached gas estimates and gas-adjustment levels (<=0 disables)")
 
-	// Marking required flags
-	if err := rootCmd.MarkFlagRequired(flags.FlagHome); err != nil {
-		panic(err)
-	}
-	// Note: --from, --grpc, --chain-id, and --node are only required in normal mode, not test mode
-	// We'll validate them in the Run function instead
+	// Auto-bridge: keep wallet at a fixed balance by bridging the excess to Ethereum
+	rootCmd.Flags().Uint64(daemonflags.FlagAutoBalanceToKeep, 0, "Keep this amount of loya in the wallet; bridge any excess to Ethereum at --auto-balance-execution-time (0 = disabled)")
+	rootCmd.Flags().String(daemonflags.FlagAutoBalanceExecutionTime, "00:00", "UTC time to execute the auto-balance bridge (HH:MM, e.g. '03:00')")
+	rootCmd.Flags().String(daemonflags.FlagAutoBalanceBridgeToEthAddr, "", "Ethereum address to bridge excess tokens to (required when auto-balance-to-keep > 0)")
+
+	// Note: --home, --from, --grpc, and --node are validated in Run so that
+	// env vars (LAYER_HOME, FROM, GRPC_NODES, RPC_NODES) are also accepted.
 
 	// Try to load .env from current directory, or parent directory if not found.
 	// .env file is optional — allows the daemon to run without one if env vars are set another way.
@@ -145,4 +187,8 @@ func init() {
 	if err := viper.BindPFlags(rootCmd.Flags()); err != nil {
 		panic(err)
 	}
+
+	// Allow all flags to be set via environment variables.
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+	viper.AutomaticEnv()
 }

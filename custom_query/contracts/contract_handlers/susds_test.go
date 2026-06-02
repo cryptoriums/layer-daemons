@@ -78,7 +78,7 @@ func TestSUSDSHandler_FetchValue(t *testing.T) {
 			handler := &SUSDSHandler{}
 			ctx := context.Background()
 
-			value, err := handler.FetchValue(ctx, contractReader, nil) // sUSDS doesn't use price cache
+			value, err := handler.FetchValue(ctx, contractReader, nil, 0) // sUSDS doesn't use price cache
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -134,9 +134,7 @@ func TestSUSDSHandler_CalculationPrecision(t *testing.T) {
 
 // Integration test - tests the actual contract read functionality
 func TestSUSDSHandler_ContractRead_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
+	skipContractIntegrationUnlessEnabled(t)
 
 	// Use public RPC endpoints that don't require authentication
 	rpcURLs := []string{

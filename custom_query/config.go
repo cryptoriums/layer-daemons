@@ -10,15 +10,22 @@ import (
 	"github.com/pelletier/go-toml"
 	contractreader "github.com/tellor-io/layer-daemons/custom_query/contracts/contract_reader"
 	rpcreader "github.com/tellor-io/layer-daemons/custom_query/rpc/rpc_reader"
+	"github.com/tellor-io/layer-daemons/utils"
+)
+
+const (
+	endpointTypeCombined = "combined"
+	endpointTypeContract = "contract"
 )
 
 type EndpointTemplate struct {
-	URLTemplate string            `toml:"url_template"`
-	Query       string            `toml:"query"` // for POST requests
-	Method      string            `toml:"method"`
-	Timeout     int               `toml:"timeout"`
-	ApiKey      string            `toml:"api_key"`
-	Headers     map[string]string `toml:"headers"`
+	URLTemplate    string            `toml:"url_template"`
+	Query          string            `toml:"query"` // for POST requests
+	Method         string            `toml:"method"`
+	Timeout        int               `toml:"timeout"`
+	ApiKey         string            `toml:"api_key"`
+	Headers        map[string]string `toml:"headers"`
+	MaxDataAgeSecs int               `toml:"max_data_age_seconds"` // 0 = disabled
 }
 
 type RPCEndpointTemplate struct {
@@ -31,10 +38,11 @@ type Config struct {
 }
 
 type ContractHandler struct {
-	Handler  string
-	Reader   *contractreader.Reader
-	MarketId string
-	SourceId string
+	Handler    string
+	Reader     *contractreader.Reader
+	MarketId   string
+	SourceId   string
+	MaxDataAge time.Duration
 }
 
 type RpcHandler struct {
@@ -46,6 +54,7 @@ type RpcHandler struct {
 	EndpointID string
 	MarketId   string
 	SourceId   string
+	MaxDataAge time.Duration
 }
 
 type CombinedHandler struct {
@@ -55,6 +64,7 @@ type CombinedHandler struct {
 	Config           map[string]any
 	MinResponses     int
 	MaxSpreadPercent float64
+	MaxDataAge       time.Duration
 }
 type QueryConfig struct {
 	ID                string            `toml:"id"`
@@ -83,6 +93,9 @@ type EndpointConfig struct {
 	Invert   bool   `toml:"invert"`
 	UsdViaID uint32 `toml:"usd_via_id"`
 
+	// Data freshness — overrides the endpoint template default when non-zero.
+	MaxDataAgeSecs int `toml:"max_data_age_seconds"`
+
 	// Combined handler fields
 	CombinedSources map[string]string `toml:"combined_sources"`
 	CombinedConfig  map[string]any    `toml:"combined_config"`
@@ -101,23 +114,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 		return nil, fmt.Errorf("error unmarshalling toml file: %w", err)
 	}
 
-	// Process RPC endpoints
-	processedRPCEndpoints := make(map[string][]string)
-	for chain, endpointConfig := range config.RPCEndpoints {
-		var urls []string
-		for _, url := range endpointConfig.URLs {
-			expandedURL := os.ExpandEnv(url)
-			// Skip if env var still contains ${}
-			if strings.Contains(expandedURL, "${") && strings.Contains(expandedURL, "}") {
-				fmt.Printf("Skipping RPC endpoint with missing env var: %s\n", url)
-				continue
-			}
-			urls = append(urls, expandedURL)
-		}
-		if len(urls) > 0 {
-			processedRPCEndpoints[chain] = urls
-		}
-	}
+	processedRPCEndpoints := processRPCEndpoints(config.RPCEndpoints)
 
 	// loop through the queries and create a map of query ID to query config
 	queryMap := make(map[string]QueryConfig)
@@ -136,7 +133,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 		combinedReaders := make([]CombinedHandler, 0)
 		for _, endpoint := range query.Endpoints {
 			// Handle combined endpoints
-			if endpoint.EndpointType == "combined" {
+			if endpoint.EndpointType == endpointTypeCombined {
 				if endpoint.Handler == "" {
 					return nil, fmt.Errorf("combined endpoint missing handler for query %s", query.ID)
 				}
@@ -173,10 +170,13 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 
 							// Process source-specific parameters (e.g., "sushiswap_api_params" or "coingecko_api_params")
 							paramsKey := sourceName + "_params"
+							sourceParams := make(map[string]string)
 							if paramsRaw, exists := endpoint.CombinedConfig[paramsKey]; exists {
 								for key, value := range paramsRaw.(map[string]any) {
 									placeholder := fmt.Sprintf("{%s}", key)
-									url = strings.ReplaceAll(url, placeholder, fmt.Sprintf("%v", value))
+									v := fmt.Sprintf("%v", value)
+									url = strings.ReplaceAll(url, placeholder, v)
+									sourceParams[key] = v
 								}
 							}
 
@@ -189,6 +189,13 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 									value = template.ApiKey
 								}
 								processedHeaders[key] = value
+							}
+
+							// Also substitute params into the query body (e.g. {pool_id} in GraphQL queries)
+							processedQuery := template.Query
+							for key, value := range sourceParams {
+								placeholder := fmt.Sprintf("{%s}", key)
+								processedQuery = strings.ReplaceAll(processedQuery, placeholder, value)
 							}
 
 							// Get source-specific response path (e.g., "sushiswap_api_response_path")
@@ -206,8 +213,8 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 								}
 							}
 
-							reader, err := rpcreader.NewReader(url, template.Method, template.Query,
-								processedHeaders, responsePath, template.Timeout)
+							reader, err := rpcreader.NewReader(url, template.Method, processedQuery,
+								processedHeaders, responsePath, template.Timeout, sourceParams)
 							if err != nil {
 								return nil, fmt.Errorf("failed to create RPC reader for combined source %s in query %s: %w",
 									sourceName, query.ID, err)
@@ -248,11 +255,12 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 					Config:           endpoint.CombinedConfig,
 					MinResponses:     minResponses,
 					MaxSpreadPercent: maxSpreadPercent,
+					MaxDataAge:       resolveMaxDataAge(0, endpoint.MaxDataAgeSecs),
 				})
 				continue
 			}
 
-			if endpoint.EndpointType == "contract" {
+			if endpoint.EndpointType == endpointTypeContract {
 				if endpoint.Handler == "" || endpoint.Chain == "" {
 					return nil, fmt.Errorf("contract endpoint missing required fields (handler, chain) for query %s", query.ID)
 				}
@@ -267,10 +275,11 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 				}
 
 				contractReaders = append(contractReaders, ContractHandler{
-					Handler:  endpoint.Handler,
-					Reader:   contractReader,
-					MarketId: endpoint.MarketId,
-					SourceId: endpoint.EndpointType,
+					Handler:    endpoint.Handler,
+					Reader:     contractReader,
+					MarketId:   endpoint.MarketId,
+					SourceId:   endpoint.EndpointType,
+					MaxDataAge: resolveMaxDataAge(0, endpoint.MaxDataAgeSecs),
 				})
 				continue
 			}
@@ -327,7 +336,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 				processedQuery = strings.ReplaceAll(processedQuery, placeholder, value)
 			}
 
-			rpcReader, err := rpcreader.NewReader(url, template.Method, processedQuery, processedHeaders, endpoint.ResponsePath, template.Timeout)
+			rpcReader, err := rpcreader.NewReader(url, template.Method, processedQuery, processedHeaders, endpoint.ResponsePath, template.Timeout, endpoint.Params)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create RPC reader for endpoint %s in query %s: %w", endpoint.EndpointType, query.ID, err)
 			}
@@ -340,6 +349,7 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 				EndpointID: endpoint.EndpointType,
 				MarketId:   endpoint.MarketId,
 				SourceId:   endpoint.EndpointType,
+				MaxDataAge: resolveMaxDataAge(template.MaxDataAgeSecs, endpoint.MaxDataAgeSecs),
 			})
 		}
 		queryMap[query.ID] = QueryConfig{
@@ -355,6 +365,54 @@ func BuildQueryEndpoints(homeDir, localDir, file string) (map[string]QueryConfig
 	}
 
 	return queryMap, nil
+}
+
+func processRPCEndpoints(configured map[string]RPCEndpointTemplate) map[string][]string {
+	processed := make(map[string][]string)
+	for chain, endpointConfig := range configured {
+		if chain == "ethereum" {
+			if urls, err := utils.ETHMainnetRPCNodesFromEnv(); err == nil {
+				processed[chain] = urls
+				continue
+			}
+		}
+
+		var urls []string
+		for _, url := range endpointConfig.URLs {
+			expandedURL := os.ExpandEnv(url)
+			// Skip if env var still contains ${}
+			if strings.Contains(expandedURL, "${") && strings.Contains(expandedURL, "}") {
+				fmt.Printf("Skipping RPC endpoint with missing env var: %s\n", url)
+				continue
+			}
+			if strings.Contains(expandedURL, ",") {
+				endpoints, err := utils.ParseEndpointList(expandedURL)
+				if err != nil {
+					fmt.Printf("Skipping RPC endpoint list with invalid value: %s\n", url)
+					continue
+				}
+				urls = append(urls, endpoints...)
+				continue
+			}
+			urls = append(urls, expandedURL)
+		}
+		if len(urls) > 0 {
+			processed[chain] = urls
+		}
+	}
+	return processed
+}
+
+// resolveMaxDataAge returns the effective max data age duration for an endpoint.
+// The per-endpoint value takes precedence over the template default; 0 means disabled.
+func resolveMaxDataAge(templateSecs, endpointSecs int) time.Duration {
+	if endpointSecs > 0 {
+		return time.Duration(endpointSecs) * time.Second
+	}
+	if templateSecs > 0 {
+		return time.Duration(templateSecs) * time.Second
+	}
+	return 0
 }
 
 func processApiKeys(config *Config) {

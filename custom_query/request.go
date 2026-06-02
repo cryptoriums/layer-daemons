@@ -3,6 +3,7 @@ package customquery
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,7 +37,29 @@ type FetchPriceResult struct {
 	SuccessRate  float64
 }
 
-// FetchPrice fetches price data for the given query ID
+func fetchPriceResultFromCollected(
+	allResults []Result,
+	successfulResults []Result,
+	query QueryConfig,
+	totalEndpoints int,
+	encodedValue string,
+) *FetchPriceResult {
+	successRate := 0.0
+	if totalEndpoints > 0 {
+		successRate = float64(len(successfulResults)) / float64(totalEndpoints)
+	}
+	return &FetchPriceResult{
+		EncodedValue: encodedValue,
+		RawResults:   allResults,
+		QueryID:      query.ID,
+		ResponseType: query.ResponseType,
+		SuccessRate:  successRate,
+	}
+}
+
+// FetchPrice fetches price data for the given query ID.
+// On error (e.g. insufficient endpoints or median spread exceeded), the returned *FetchPriceResult
+// may still be non-nil with RawResults filled for per-source diagnostics.
 func FetchPrice(
 	ctx context.Context,
 	query QueryConfig,
@@ -102,23 +125,18 @@ func FetchPrice(
 	}
 	// Check if we have enough successful responses
 	if len(successfulResults) < query.MinResponses {
-		return nil, fmt.Errorf("insufficient successful responses: got %d, need %d",
-			len(successfulResults), query.MinResponses)
+		return fetchPriceResultFromCollected(allResults, successfulResults, query, totalEndpoints, ""),
+			fmt.Errorf("insufficient successful responses: got %d, need %d",
+				len(successfulResults), query.MinResponses)
 	}
 	fmt.Println("Successful results:", successfulResults)
 	// Aggregate results
 	aggregatedValue, err := aggregateResults(successfulResults, query.AggregationMethod, query.ResponseType, query.MaxSpreadPercent)
 	if err != nil {
-		return nil, err
+		return fetchPriceResultFromCollected(allResults, successfulResults, query, totalEndpoints, ""), err
 	}
 
-	return &FetchPriceResult{
-		EncodedValue: aggregatedValue,
-		RawResults:   allResults,
-		QueryID:      query.ID,
-		ResponseType: query.ResponseType,
-		SuccessRate:  float64(len(successfulResults)) / float64(totalEndpoints),
-	}, nil
+	return fetchPriceResultFromCollected(allResults, successfulResults, query, totalEndpoints, aggregatedValue), nil
 }
 
 func emitPriceForTelemetry(result Result, query QueryConfig) {
@@ -170,10 +188,18 @@ func fetchFromContractEndpoint(
 			SourceId:   contractReader.SourceId,
 		}
 	}
-	value, err := handler.FetchValue(ctx, contractReader.Reader, priceCache)
+	value, err := handler.FetchValue(ctx, contractReader.Reader, priceCache, contractReader.MaxDataAge)
 	if err != nil {
 		return Result{
 			Err:        fmt.Errorf("failed to fetch contract value: %w", err),
+			EndpointID: contractReader.Handler,
+			MarketId:   contractReader.MarketId,
+			SourceId:   contractReader.SourceId,
+		}
+	}
+	if err := validatePositiveFiniteValue(value, "contract value"); err != nil {
+		return Result{
+			Err:        err,
 			EndpointID: contractReader.Handler,
 			MarketId:   contractReader.MarketId,
 			SourceId:   contractReader.SourceId,
@@ -205,26 +231,33 @@ func fetchFromRpcEndpoint(
 	if err != nil {
 		return Result{
 			Err:        fmt.Errorf("failed to get RPC handler: %w", err),
-			EndpointID: rpchandler.Handler,
+			EndpointID: rpchandler.EndpointID,
 			MarketId:   rpchandler.MarketId,
 			SourceId:   rpchandler.SourceId,
 		}
 	}
 
-	value, err := handler.FetchValue(ctx, rpchandler.Reader, rpchandler.Invert, rpchandler.UsdViaID, priceCache)
+	value, err := handler.FetchValue(ctx, rpchandler.Reader, rpchandler.Invert, rpchandler.UsdViaID, priceCache, rpchandler.MaxDataAge)
 	if err != nil {
 		return Result{
-			Err:        fmt.Errorf("failed to fetch RPC value: %w", err),
-			EndpointID: rpchandler.Handler,
+			Err:        fmt.Errorf("failed to fetch value: %w", err),
+			EndpointID: rpchandler.EndpointID,
+			MarketId:   rpchandler.MarketId,
+			SourceId:   rpchandler.SourceId,
+		}
+	}
+	if err := validatePositiveFiniteValue(value, "RPC value"); err != nil {
+		return Result{
+			Err:        err,
+			EndpointID: rpchandler.EndpointID,
 			MarketId:   rpchandler.MarketId,
 			SourceId:   rpchandler.SourceId,
 		}
 	}
 
-	fmt.Println("RPC value:", value, rpchandler.EndpointID)
 	return Result{
 		Value:      value,
-		EndpointID: rpchandler.Handler,
+		EndpointID: rpchandler.EndpointID,
 		MarketId:   rpchandler.MarketId,
 		SourceId:   rpchandler.SourceId,
 	}
@@ -266,10 +299,16 @@ func fetchFromCombinedEndpoint(
 		}
 	}
 
-	value, err := handler.FetchValue(ctx, combinedReader.ContractReaders, combinedReader.RpcReaders, priceCache, combinedReader.MinResponses, combinedReader.MaxSpreadPercent)
+	value, err := handler.FetchValue(ctx, combinedReader.ContractReaders, combinedReader.RpcReaders, priceCache, combinedReader.MinResponses, combinedReader.MaxSpreadPercent, combinedReader.MaxDataAge)
 	if err != nil {
 		return Result{
 			Err:        fmt.Errorf("failed to fetch combined value: %w", err),
+			EndpointID: combinedReader.Handler,
+		}
+	}
+	if err := validatePositiveFiniteValue(value, "combined value"); err != nil {
+		return Result{
+			Err:        err,
 			EndpointID: combinedReader.Handler,
 		}
 	}
@@ -288,4 +327,14 @@ func fetchFromCombinedEndpoint(
 
 func ConvertFloat64ToString(num float64) string {
 	return strconv.FormatFloat(num, 'f', -1, 64)
+}
+
+func validatePositiveFiniteValue(value float64, label string) error {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Errorf("%s is not finite: %v", label, value)
+	}
+	if value <= 0 {
+		return fmt.Errorf("%s must be positive, got %f", label, value)
+	}
+	return nil
 }

@@ -138,7 +138,7 @@ func TestWSTETHHandler_FetchValue(t *testing.T) {
 			handler := &WSTETHHandler{}
 			ctx := context.Background()
 
-			value, err := handler.FetchValue(ctx, contractReader, priceCache)
+			value, err := handler.FetchValue(ctx, contractReader, priceCache, 0)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -204,9 +204,7 @@ func padLeft(data []byte, size int) []byte {
 
 // Integration test - tests the actual contract read functionality
 func TestWSTETHHandler_ContractRead_Integration(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
+	skipContractIntegrationUnlessEnabled(t)
 
 	// Use public RPC endpoints that don't require authentication
 	rpcURLs := []string{

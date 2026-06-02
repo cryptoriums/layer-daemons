@@ -13,11 +13,13 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	tokenbridgetypes "github.com/tellor-io/layer-daemons/server/types/token_bridge"
 	tokenbridgetipstypes "github.com/tellor-io/layer-daemons/server/types/token_bridge_tips"
 	tokenbridge "github.com/tellor-io/layer-daemons/token_bridge_feed/abi/v2"
+	"github.com/tellor-io/layer-daemons/utils"
 
 	"cosmossdk.io/log"
 )
@@ -27,15 +29,29 @@ type Client struct {
 	logger                   log.Logger
 	tokenDepositsCache       *tokenbridgetypes.DepositReports
 	tokenBridgeTipsCache     *tokenbridgetipstypes.DepositTips
+	chainID                  string
 	daemonStartup            sync.WaitGroup
 	runningSubtasksWaitGroup sync.WaitGroup
 	tickers                  []*time.Ticker
 	stops                    []chan bool
 
-	primaryEthClient       *ethclient.Client
-	fallbackEthClient      *ethclient.Client
-	primaryBridgeContract  *tokenbridge.TokenBridgeV2
-	fallbackBridgeContract *tokenbridge.TokenBridgeV2
+	ethRPCConnections []ethRPCConnection
+}
+
+const (
+	tokenBridgeTestContractEnv = "TOKEN_BRIDGE_TEST_CONTRACT"
+	ethRPCCallTimeout          = 10 * time.Second
+)
+
+type ethRPCConnection struct {
+	endpoint string
+	client   *ethclient.Client
+	contract *tokenbridge.TokenBridgeV2
+}
+
+var tokenBridgeContractByChainID = map[string]string{
+	"tellor-1":    "0x6ec401744008f4B018Ed9A36f76e6629799Ee50E",
+	"layertest-5": "0x55355157703A44f7516FBB831333317E98944e32",
 }
 
 type DepositReceipt struct {
@@ -60,10 +76,10 @@ type APIResponse struct {
 	} `json:"data"`
 }
 
-func StartNewClient(ctx context.Context, logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositReports, tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips) *Client {
+func StartNewClient(ctx context.Context, logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositReports, tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips, chainID string) *Client {
 	logger.Info("Starting tokenbridge daemon")
 
-	client := newClient(logger, tokenDepositsCache, tokenBridgeTipsCache)
+	client := newClient(logger, tokenDepositsCache, tokenBridgeTipsCache, chainID)
 	client.runningSubtasksWaitGroup.Add(1)
 	go func() {
 		defer client.runningSubtasksWaitGroup.Done()
@@ -106,7 +122,7 @@ func waitForContractInitialized(ctx context.Context, logger log.Logger, retryDel
 	}
 }
 
-func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositReports, tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips) *Client {
+func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositReports, tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips, chainID string) *Client {
 	logger = logger.With(log.ModuleKey, "tokenbridge-daemon")
 	client := &Client{
 		tickers:              []*time.Ticker{},
@@ -114,6 +130,7 @@ func newClient(logger log.Logger, tokenDepositsCache *tokenbridgetypes.DepositRe
 		logger:               logger,
 		tokenDepositsCache:   tokenDepositsCache,
 		tokenBridgeTipsCache: tokenBridgeTipsCache,
+		chainID:              strings.TrimSpace(chainID),
 	}
 
 	// Set the client's daemonStartup state to indicate that the daemon has not finished starting up.
@@ -307,38 +324,16 @@ func (c *Client) QueryAPI(urlStr string) ([]byte, error) {
 	return body, nil
 }
 
-func (c *Client) getEthRpcUrls() (string, string, error) {
-	primaryUrl := os.Getenv("ETH_RPC_URL_PRIMARY")
-	if primaryUrl == "" {
-		return "", "", fmt.Errorf("ETH_RPC_URL_PRIMARY not set")
-	}
-
-	fallbackUrl := os.Getenv("ETH_RPC_URL_FALLBACK")
-	if fallbackUrl == "" {
-		return "", "", fmt.Errorf("ETH_RPC_URL_FALLBACK not set")
-	}
-
-	return strings.TrimSpace(primaryUrl), strings.TrimSpace(fallbackUrl), nil
+func (c *Client) getBridgeChainRpcUrls() ([]string, error) {
+	return utils.BridgeChainRPCNodesFromEnv()
 }
 
 // initializeClientsAndContracts sets up the Ethereum clients and contract instances
 // This must be called before checking if the contract is initialized
 func (c *Client) initializeClientsAndContracts() error {
-	primaryUrl, fallbackUrl, err := c.getEthRpcUrls()
+	rpcURLs, err := c.getBridgeChainRpcUrls()
 	if err != nil {
-		return fmt.Errorf("failed to get ETH RPC urls: %w", err)
-	}
-
-	// Connect to primary endpoint
-	c.primaryEthClient, err = ethclient.Dial(primaryUrl)
-	if err != nil {
-		return fmt.Errorf("failed to connect to primary RPC endpoint: %w", err)
-	}
-
-	// Connect to fallback endpoint
-	c.fallbackEthClient, err = ethclient.Dial(fallbackUrl)
-	if err != nil {
-		return fmt.Errorf("failed to connect to fallback RPC endpoint: %w", err)
+		return fmt.Errorf("failed to get bridge chain RPC URLs: %w", err)
 	}
 
 	contractAddress, err := c.getTokenBridgeContractAddress()
@@ -346,23 +341,12 @@ func (c *Client) initializeClientsAndContracts() error {
 		return fmt.Errorf("failed to get token bridge contract address: %w", err)
 	}
 
-	// Initialize contracts
-	c.primaryBridgeContract, err = tokenbridge.NewTokenBridgeV2(contractAddress, c.primaryEthClient)
-	if err != nil {
-		return fmt.Errorf("failed to instantiate primary TokenBridge contract: %w", err)
-	}
-
-	c.fallbackBridgeContract, err = tokenbridge.NewTokenBridgeV2(contractAddress, c.fallbackEthClient)
-	if err != nil {
-		return fmt.Errorf("failed to instantiate fallback TokenBridge contract: %w", err)
-	}
-
-	return nil
+	return c.connectEthRPCs(rpcURLs, contractAddress)
 }
 
 func (c *Client) InitializeDeposits() error {
 	// Ensure clients and contracts are initialized (in case they weren't already)
-	if c.primaryBridgeContract == nil || c.fallbackBridgeContract == nil {
+	if len(c.ethRPCConnections) == 0 {
 		if err := c.initializeClientsAndContracts(); err != nil {
 			return fmt.Errorf("failed to initialize clients and contracts: %w", err)
 		}
@@ -445,15 +429,22 @@ func (c *Client) QueryTokenBridgeContract() error {
 }
 
 func (c *Client) CheckForFinality(blockHeight *big.Int) (bool, error) {
-	// Try primary first
-	currentBlock, err := c.primaryEthClient.BlockNumber(context.Background())
-	if err != nil {
-		c.logger.Error("Failed to query primary client, trying fallback", "error", err)
-		// Try fallback
-		currentBlock, err = c.fallbackEthClient.BlockNumber(context.Background())
-		if err != nil {
-			return false, fmt.Errorf("failed to query block number from both endpoints: %w", err)
+	var currentBlock uint64
+	var lastErr error
+	for _, conn := range c.ethRPCConnections {
+		callCtx, cancel := context.WithTimeout(context.Background(), ethRPCCallTimeout)
+		block, err := conn.client.BlockNumber(callCtx)
+		cancel()
+		if err == nil {
+			currentBlock = block
+			lastErr = nil
+			break
 		}
+		lastErr = err
+		c.logger.Error("Failed to query Ethereum block number, trying next endpoint", "endpoint", conn.endpoint, "error", err)
+	}
+	if lastErr != nil {
+		return false, fmt.Errorf("failed to query block number from all ETH RPC endpoints: %w", lastErr)
 	}
 
 	currentBlockBigInt := new(big.Int).SetUint64(currentBlock)
@@ -537,101 +528,127 @@ func (c *Client) EncodeReportValue(depositReceipt DepositReceipt) ([]byte, error
 }
 
 func (c *Client) getTokenBridgeContractAddress() (common.Address, error) {
-	tokenBridgeContractAddress := os.Getenv("TOKEN_BRIDGE_CONTRACT")
-	if tokenBridgeContractAddress == "" {
-		return common.Address{}, fmt.Errorf("TOKEN_BRIDGE_CONTRACT not set")
-	} else {
-		fmt.Println("TOKEN_BRIDGE_CONTRACT", tokenBridgeContractAddress)
+	chainID := strings.ToLower(strings.TrimSpace(c.chainID))
+	if tokenBridgeContractAddress, ok := tokenBridgeContractByChainID[chainID]; ok {
+		c.logger.Info("Using token bridge contract", "chain_id", c.chainID, "address", tokenBridgeContractAddress)
+		return common.HexToAddress(tokenBridgeContractAddress), nil
 	}
+
+	tokenBridgeContractAddress := strings.TrimSpace(os.Getenv(tokenBridgeTestContractEnv))
+	if tokenBridgeContractAddress == "" {
+		return common.Address{}, fmt.Errorf("unsupported chain ID %q for token bridge contract; set %s for local/custom chains", c.chainID, tokenBridgeTestContractEnv)
+	}
+	if !common.IsHexAddress(tokenBridgeContractAddress) {
+		return common.Address{}, fmt.Errorf("%s is not a valid ethereum address", tokenBridgeTestContractEnv)
+	}
+	c.logger.Info("Using fallback token bridge contract", "chain_id", c.chainID, "env_var", tokenBridgeTestContractEnv, "address", tokenBridgeContractAddress)
 	return common.HexToAddress(tokenBridgeContractAddress), nil
 }
 
-// Add new helper function for reconnection
-func (c *Client) reconnectEthClient() error {
-	primaryUrl, fallbackUrl, err := c.getEthRpcUrls()
-	if err != nil {
-		return fmt.Errorf("failed to get ETH RPC urls: %w", err)
+func (c *Client) connectEthRPCs(rpcURLs []string, contractAddress common.Address) error {
+	c.closeEthClients()
+	c.ethRPCConnections = nil
+
+	var errs []string
+	for _, rpcURL := range rpcURLs {
+		dialCtx, cancel := context.WithTimeout(context.Background(), ethRPCCallTimeout)
+		ethClient, err := ethclient.DialContext(dialCtx, rpcURL)
+		cancel()
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", rpcURL, err))
+			c.logger.Error("Failed to connect to ETH RPC endpoint", "endpoint", rpcURL, "error", err)
+			continue
+		}
+
+		contract, err := tokenbridge.NewTokenBridgeV2(contractAddress, ethClient)
+		if err != nil {
+			ethClient.Close()
+			errs = append(errs, fmt.Sprintf("%s: %v", rpcURL, err))
+			c.logger.Error("Failed to instantiate TokenBridge contract", "endpoint", rpcURL, "error", err)
+			continue
+		}
+
+		c.ethRPCConnections = append(c.ethRPCConnections, ethRPCConnection{
+			endpoint: rpcURL,
+			client:   ethClient,
+			contract: contract,
+		})
 	}
 
-	// Close existing clients
-	if c.primaryEthClient != nil {
-		c.primaryEthClient.Close()
+	if len(c.ethRPCConnections) == 0 {
+		if len(errs) == 0 {
+			return fmt.Errorf("no ETH RPC endpoints configured")
+		}
+		return fmt.Errorf("failed to initialize ETH RPC endpoints: %s", strings.Join(errs, "; "))
 	}
-	if c.fallbackEthClient != nil {
-		c.fallbackEthClient.Close()
-	}
-
-	// Reconnect primary
-	c.primaryEthClient, err = ethclient.Dial(primaryUrl)
-	if err != nil {
-		return fmt.Errorf("failed to reconnect to primary endpoint: %w", err)
-	}
-
-	// Reconnect fallback
-	c.fallbackEthClient, err = ethclient.Dial(fallbackUrl)
-	if err != nil {
-		return fmt.Errorf("failed to reconnect to fallback endpoint: %w", err)
-	}
-
-	contractAddress, err := c.getTokenBridgeContractAddress()
-	if err != nil {
-		return fmt.Errorf("failed to get token bridge contract address: %w", err)
-	}
-
-	// Reinitialize contracts
-	c.primaryBridgeContract, err = tokenbridge.NewTokenBridgeV2(contractAddress, c.primaryEthClient)
-	if err != nil {
-		return fmt.Errorf("failed to reinstantiate primary TokenBridge contract: %w", err)
-	}
-
-	c.fallbackBridgeContract, err = tokenbridge.NewTokenBridgeV2(contractAddress, c.fallbackEthClient)
-	if err != nil {
-		return fmt.Errorf("failed to reinstantiate fallback TokenBridge contract: %w", err)
-	}
-
 	return nil
 }
 
-func (c *Client) QueryCurrentDepositId() (*big.Int, error) {
-	// try primary first
-	depositId, err := c.primaryBridgeContract.DepositId(nil)
-	if err != nil {
-		c.logger.Error("Failed to query primary contract, trying fallback", "error", err)
-		// try fallback
-		depositId, err = c.fallbackBridgeContract.DepositId(nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query deposit ID from both endpoints: %w", err)
+func (c *Client) closeEthClients() {
+	for _, conn := range c.ethRPCConnections {
+		if conn.client != nil {
+			conn.client.Close()
 		}
 	}
-	return depositId, nil
+}
+
+func (c *Client) reconnectEthClient() error {
+	return c.initializeClientsAndContracts()
+}
+
+func (c *Client) QueryCurrentDepositId() (*big.Int, error) {
+	var lastErr error
+	for _, conn := range c.ethRPCConnections {
+		callCtx, cancel := context.WithTimeout(context.Background(), ethRPCCallTimeout)
+		depositId, err := conn.contract.DepositId(&bind.CallOpts{Context: callCtx})
+		cancel()
+		if err == nil {
+			return depositId, nil
+		}
+		lastErr = err
+		c.logger.Error("Failed to query deposit ID, trying next endpoint", "endpoint", conn.endpoint, "error", err)
+	}
+	return nil, fmt.Errorf("failed to query deposit ID from all ETH RPC endpoints: %w", lastErr)
 }
 
 func (c *Client) QueryHasContractBeenInitialized() (bool, error) {
-	// try primary first
-	initialized, err := c.primaryBridgeContract.Initialized(nil)
-	if err != nil {
-		c.logger.Error("Failed to query primary contract, trying fallback", "error", err)
-		// try fallback
-		initialized, err = c.fallbackBridgeContract.Initialized(nil)
+	var lastErr error
+	for _, conn := range c.ethRPCConnections {
+		callCtx, cancel := context.WithTimeout(context.Background(), ethRPCCallTimeout)
+		initialized, err := conn.contract.Initialized(&bind.CallOpts{Context: callCtx})
+		cancel()
+		if err == nil {
+			return initialized, nil
+		}
+		lastErr = err
+		c.logger.Error("Failed to query contract initialization, trying next endpoint", "endpoint", conn.endpoint, "error", err)
 	}
-
-	if err != nil {
-		c.logger.Error("Failed to query fallback contract", "error", err)
-		return false, fmt.Errorf("failed to query has contract been initialized from both endpoints: %w", err)
-	}
-	return initialized, nil
+	return false, fmt.Errorf("failed to query has contract been initialized from all ETH RPC endpoints: %w", lastErr)
 }
 
 func (c *Client) QueryDepositDetails(depositId *big.Int) (DepositReceipt, error) {
-	// Try primary first
-	deposit, err := c.primaryBridgeContract.Deposits(nil, depositId)
-	if err != nil {
-		c.logger.Error("Failed to query primary contract, trying fallback", "error", err)
-		// Try fallback
-		deposit, err = c.fallbackBridgeContract.Deposits(nil, depositId)
-		if err != nil {
-			return DepositReceipt{}, fmt.Errorf("failed to query deposit details from both endpoints: %w", err)
+	var deposit struct {
+		Sender      common.Address
+		Recipient   string
+		Amount      *big.Int
+		Tip         *big.Int
+		BlockHeight *big.Int
+	}
+	var lastErr error
+	for _, conn := range c.ethRPCConnections {
+		callCtx, cancel := context.WithTimeout(context.Background(), ethRPCCallTimeout)
+		result, err := conn.contract.Deposits(&bind.CallOpts{Context: callCtx}, depositId)
+		cancel()
+		if err == nil {
+			deposit = result
+			lastErr = nil
+			break
 		}
+		lastErr = err
+		c.logger.Error("Failed to query deposit details, trying next endpoint", "endpoint", conn.endpoint, "error", err)
+	}
+	if lastErr != nil {
+		return DepositReceipt{}, fmt.Errorf("failed to query deposit details from all ETH RPC endpoints: %w", lastErr)
 	}
 
 	if deposit.Amount.Cmp(big.NewInt(0)) == 0 || deposit.BlockHeight.Cmp(big.NewInt(0)) == 0 {
@@ -665,12 +682,7 @@ func (c *Client) Stop() {
 	}
 
 	// Close Ethereum clients
-	if c.primaryEthClient != nil {
-		c.primaryEthClient.Close()
-	}
-	if c.fallbackEthClient != nil {
-		c.fallbackEthClient.Close()
-	}
+	c.closeEthClients()
 
 	// Wait for all subtasks to complete
 	c.runningSubtasksWaitGroup.Wait()
