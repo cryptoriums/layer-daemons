@@ -14,6 +14,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/spf13/viper"
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	globalfeetypes "github.com/strangelove-ventures/globalfee/x/globalfee/types"
 	customquery "github.com/tellor-io/layer-daemons/custom_query"
 	daemonflags "github.com/tellor-io/layer-daemons/flags"
