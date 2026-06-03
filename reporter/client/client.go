@@ -298,7 +298,10 @@ func (c *Client) Start(
 	if remoteSignerAddr != "" {
 		// Use remote signer for tx signing — no local private key needed.
 		c.logger.Info("Using remote signer for tx signing", "addr", remoteSignerAddr)
-		kr, signerAccAddr, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr)
+		caCert := viper.GetString("remote-signer-ca-cert")
+		clientCert := viper.GetString("remote-signer-client-cert")
+		clientKey := viper.GetString("remote-signer-client-key")
+		kr, signerAccAddr, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr, caCert, clientCert, clientKey)
 		if err != nil {
 			return fmt.Errorf("failed to initialise remote signer keyring: %w", err)
 		}
