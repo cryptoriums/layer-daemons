@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -32,7 +33,13 @@ var rootCmd = &cobra.Command{
 	Short: "Run reporter daemon",
 	Long:  "reporterd is a daemon that runs the reporter that interacts with the layer chain.",
 	Run: func(cmd *cobra.Command, args []string) {
-		homePath := viper.GetString(flags.FlagHome)
+		// Prefer LAYER_HOME over viper "home" because AutomaticEnv maps home -> shell $HOME.
+		homePath := os.Getenv("LAYER_HOME")
+		if homePath == "" {
+			homePath = viper.GetString(flags.FlagHome)
+		}
+		// Keep viper in sync for downstream consumers reading "home".
+		viper.Set(flags.FlagHome, homePath)
 		logLevelstr := viper.GetString(flags.FlagLogLevel)
 		configs.WriteDefaultPricefeedExchangeToml(homePath)
 		configs.WriteDefaultMarketParamsToml(homePath)
@@ -58,20 +65,32 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Normal daemon mode - validate required flags
-		grpcAddr := viper.GetString(flags.FlagGRPC)
+		grpcCfg, err := grpcEndpointsFromEnvOrFlag(viper.GetString(flags.FlagGRPC))
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 		from := viper.GetString(flags.FlagFrom)
-		node := viper.GetString(flags.FlagNode)
+		rpcCfg, err := rpcEndpointsFromEnvOrFlag(viper.GetString(flags.FlagNode))
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
 
-		if grpcAddr == "" {
-			fmt.Printf("Error: --grpc is required in reporter mode\n")
+		if homePath == "" {
+			fmt.Printf("Error: --home (or LAYER_HOME env var) is required\n")
+			os.Exit(1)
+		}
+		if len(grpcCfg.Endpoints) == 0 {
+			fmt.Printf("Error: %s or --%s is required in reporter mode\n", envGRPCNodes, flags.FlagGRPC)
 			os.Exit(1)
 		}
 		if from == "" {
 			fmt.Printf("Error: --from is required in reporter mode\n")
 			os.Exit(1)
 		}
-		if node == "" {
-			fmt.Printf("Error: --node is required in reporter mode\n")
+		if len(rpcCfg.Endpoints) == 0 {
+			fmt.Printf("Error: %s or --%s is required in reporter mode\n", envRPCNodes, flags.FlagNode)
 			os.Exit(1)
 		}
 
@@ -79,15 +98,30 @@ var rootCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 
-		chainId, err := detectChainID(ctx, grpcAddr, node)
+		chainId, grpcAddr, selectedRPCNode, err := detectChainIDFromEndpoints(ctx, grpcCfg.Endpoints, rpcCfg.Endpoints)
 		if err != nil {
 			fmt.Printf("Error: could not detect chain ID: %v\n", err)
 			os.Exit(1)
 		}
-		logger.Info("Detected chain ID", "chain_id", chainId)
+		logger.Info(
+			"Detected chain ID",
+			"chain_id", chainId,
+			"grpc_endpoint", grpcAddr,
+			"grpc_source", grpcCfg.Source,
+			"rpc_endpoint", selectedRPCNode,
+			"rpc_source", rpcCfg.Source,
+		)
 
 		// Pass prometheusPort and signal context to NewApp
-		appInstance := daemons.NewApp(ctx, logger, chainId, grpcAddr, homePath, prometheusPort)
+		appInstance := daemons.NewApp(
+			ctx,
+			logger,
+			chainId,
+			moveEndpointToFront(grpcCfg.Endpoints, grpcAddr),
+			moveEndpointToFront(rpcCfg.Endpoints, selectedRPCNode),
+			homePath,
+			prometheusPort,
+		)
 
 		// Wait for signal
 		<-ctx.Done()
@@ -147,12 +181,8 @@ func init() {
 	rootCmd.Flags().String(daemonflags.FlagAutoBalanceExecutionTime, "00:00", "UTC time to execute the auto-balance bridge (HH:MM, e.g. '03:00')")
 	rootCmd.Flags().String(daemonflags.FlagAutoBalanceBridgeToEthAddr, "", "Ethereum address to bridge excess tokens to (required when auto-balance-to-keep > 0)")
 
-	// Marking required flags
-	if err := rootCmd.MarkFlagRequired(flags.FlagHome); err != nil {
-		panic(err)
-	}
-	// Note: --from, --grpc, and --node are only required in normal mode, not test mode
-	// We'll validate them in the Run function instead
+	// Note: --home, --from, --grpc, and --node are validated in Run so that
+	// env vars (LAYER_HOME, FROM, GRPC_NODES, RPC_NODES) are also accepted.
 
 	// Try to load .env from current directory, or parent directory if not found.
 	// .env file is optional — allows the daemon to run without one if env vars are set another way.
@@ -163,4 +193,8 @@ func init() {
 	if err := viper.BindPFlags(rootCmd.Flags()); err != nil {
 		panic(err)
 	}
+
+	// Allow all flags to be set via environment variables.
+	viper.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
+	viper.AutomaticEnv()
 }

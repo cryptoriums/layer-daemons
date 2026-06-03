@@ -291,29 +291,70 @@ func TestStop(t *testing.T) {
 		pricefeed_types.NewMarketToExchangePrices(5 * time.Second),
 	)
 
-	defer daemonServer.Stop()
-	go daemonServer.Start()
+	daemonServerErrCh := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				switch v := r.(type) {
+				case error:
+					daemonServerErrCh <- v
+				case string:
+					daemonServerErrCh <- errors.New(v)
+				default:
+					daemonServerErrCh <- fmt.Errorf("daemon server panic: %v", v)
+				}
+				return
+			}
+			daemonServerErrCh <- nil
+		}()
+
+		daemonServer.Start()
+	}()
+
+	defer func() {
+		daemonServer.Stop()
+
+		select {
+		case err := <-daemonServerErrCh:
+			if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				require.NoError(t, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for daemon server shutdown")
+		}
+	}()
 
 	// Create a gRPC server running on the default port and attach the mock prices query response.
 	grpcServer := grpc.NewServer()
 	// pricetypes.RegisterQueryServer(grpcServer, &pricesQueryServer)
-
-	// Start gRPC server with cleanup.
 	ls, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	grpcAddr := ls.Addr().String()
-	defer grpcServer.Stop()
+	grpcAddress := ls.Addr().String()
+
+	serveErrCh := make(chan error, 1)
 	go func() {
-		if serveErr := grpcServer.Serve(ls); serveErr != nil {
-			// Ignore error on shutdown.
-			_ = serveErr
+		serveErrCh <- grpcServer.Serve(ls)
+	}()
+
+	// Ensure the serving goroutine is fully drained before the test exits.
+	defer func() {
+		grpcServer.Stop()
+		_ = ls.Close()
+
+		select {
+		case serveErr := <-serveErrCh:
+			if serveErr != nil && !errors.Is(serveErr, grpc.ErrServerStopped) {
+				require.NoError(t, serveErr)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for grpc server shutdown")
 		}
 	}()
 
 	client := StartNewClient(
 		grpc_util.Ctx,
 		daemonFlags,
-		grpcAddr,
+		grpcAddress,
 		log.NewNopLogger(),
 		&daemontypes.GrpcClientImpl{},
 		[]types.MarketParam{},
