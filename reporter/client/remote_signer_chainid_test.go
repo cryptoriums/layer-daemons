@@ -42,6 +42,14 @@ func (s stubSignerClient) GetAddress(context.Context, *signerv1.GetAddressReques
 	panic("GetAddress not expected in this test")
 }
 
+func (s stubSignerClient) SignTx(context.Context, *signerv1.SignTxRequest, ...grpc.CallOption) (*signerv1.SignTxResponse, error) {
+	panic("SignTx not expected in this test")
+}
+
+func (s stubSignerClient) SignBridgeCheckpoint(context.Context, *signerv1.SignBridgeCheckpointRequest, ...grpc.CallOption) (*signerv1.SignBridgeCheckpointResponse, error) {
+	panic("SignBridgeCheckpoint not expected in this test")
+}
+
 func TestFetchRemoteSignerChainID(t *testing.T) {
 	ctx := context.Background()
 
