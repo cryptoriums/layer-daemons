@@ -407,7 +407,7 @@ func (c *Client) Start(
 		// SignTx RPC (allowlisted message types only), never the blind SignRaw.
 		kr, signerAccAddr, signerChainID, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr, caCert, clientCert, clientKey, true)
 		if err != nil {
-			return fmt.Errorf("failed to initialise remote signer keyring: %w", err)
+			return fmt.Errorf("failed to initialize remote signer keyring: %w", err)
 		}
 		// Store the connection so it gets closed during shutdown.
 		c.remoteSignerConn = signerConn

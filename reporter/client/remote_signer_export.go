@@ -3,9 +3,10 @@ package client
 import (
 	"context"
 
+	"google.golang.org/grpc"
+
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"google.golang.org/grpc"
 )
 
 // NewRemoteSignerKeyring is an exported wrapper around newKeyringFromRemoteSigner.

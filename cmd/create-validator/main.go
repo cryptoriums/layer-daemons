@@ -12,8 +12,13 @@ import (
 	"os"
 	"time"
 
-	"cosmossdk.io/math"
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
+	rsclient "github.com/tellor-io/layer-daemons/reporter/client"
+	// sets the tellor bech32 address prefix via init()
+	_ "github.com/tellor-io/layer/app/config"
+
+	"cosmossdk.io/math"
+
 	cosmosclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
@@ -21,10 +26,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	rsclient "github.com/tellor-io/layer-daemons/reporter/client"
-
-	// sets the tellor bech32 address prefix via init()
-	_ "github.com/tellor-io/layer/app/config"
 )
 
 func must(what string, err error) {
@@ -35,6 +36,10 @@ func must(what string, err error) {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
 	signerAddr := flag.String("remote-signer-addr", "", "remote signer gRPC address (host:port)")
 	ca := flag.String("remote-signer-ca-cert", "", "CA cert path")
 	cert := flag.String("remote-signer-client-cert", "", "client cert path")
@@ -142,7 +147,7 @@ func main() {
 
 	if *dryRun {
 		fmt.Printf("dry-run OK: signed create-validator tx built (%d bytes), not broadcasting\n", len(txBytes))
-		return
+		return 0
 	}
 
 	res, err := clientCtx.BroadcastTx(txBytes)
@@ -152,6 +157,7 @@ func main() {
 		fmt.Println("rawlog:", res.RawLog)
 	}
 	if res.Code != 0 {
-		os.Exit(2)
+		return 2
 	}
+	return 0
 }

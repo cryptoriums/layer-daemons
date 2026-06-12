@@ -6,9 +6,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-
 	signerv1 "github.com/tellor-io/bridge-remote-signer/api/gen/signer/v1"
+	"google.golang.org/grpc"
 )
 
 // stubSignerClient implements signerv1.BridgeSignerClient for testing the
