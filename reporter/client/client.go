@@ -403,7 +403,9 @@ func (c *Client) Start(
 		caCert := viper.GetString("remote-signer-ca-cert")
 		clientCert := viper.GetString("remote-signer-client-cert")
 		clientKey := viper.GetString("remote-signer-client-key")
-		kr, signerAccAddr, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr, caCert, clientCert, clientKey)
+		// useSignTx=true: the always-on reporter signs through the scope-checked
+		// SignTx RPC (allowlisted message types only), never the blind SignRaw.
+		kr, signerAccAddr, signerChainID, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr, caCert, clientCert, clientKey, true)
 		if err != nil {
 			return fmt.Errorf("failed to initialise remote signer keyring: %w", err)
 		}
@@ -411,6 +413,15 @@ func (c *Client) Start(
 		c.remoteSignerConn = signerConn
 		c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
 		c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(signerAccAddr)
+		// Prefer the chain ID reported by the signer so it does not have to be supplied
+		// separately. If the signer does not provide one (older signer or none configured),
+		// keep the chain ID already detected from the node endpoints.
+		if signerChainID != "" {
+			if signerChainID != chainId {
+				c.logger.Info("Using chain ID from remote signer", "signer_chain_id", signerChainID, "detected_chain_id", chainId)
+			}
+			c.cosmosCtx = c.cosmosCtx.WithChainID(signerChainID)
+		}
 	} else {
 		keyringInput, usingPasswordFile, err := keyringReader()
 		if err != nil {
