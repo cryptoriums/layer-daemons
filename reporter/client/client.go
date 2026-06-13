@@ -182,13 +182,16 @@ type Client struct {
 	gasEstimator                *gasEstimateState
 
 	// Resources that need cleanup
+	grpcMu           sync.RWMutex
 	grpcConn         *grpc.ClientConn
 	grpcClient       daemontypes.GrpcClient
+	grpcManager      *grpcEndpointManager
+	rpcMu            sync.RWMutex
+	rpcManager       *rpcEndpointManager
 	remoteSignerConn *grpc.ClientConn // non-nil when --remote-signer-addr is set
 	wg               sync.WaitGroup
 	broadcastWg      sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
 	stopOnce         sync.Once
-
 }
 
 // GetUniqueUnorderedTimeout generates a unique timeout timestamp for unordered transactions.
@@ -399,24 +402,43 @@ func (c *Client) Start(
 		clientKey := viper.GetString("remote-signer-client-key")
 		kr, signerAccAddr, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr, caCert, clientCert, clientKey)
 		if err != nil {
-			return fmt.Errorf("failed to initialise remote signer keyring: %w", err)
+			return fmt.Errorf("failed to initialize remote signer keyring: %w", err)
 		}
 		// Store the connection so it gets closed during shutdown.
 		c.remoteSignerConn = signerConn
 		c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
 		c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(signerAccAddr)
 	} else {
-		kr, err := keyring.New("", kb, homeDir, os.Stdin, encodingConfig.Codec)
+		keyringInput, usingPasswordFile, err := keyringReader()
 		if err != nil {
 			return err
 		}
+		if err := validateKeyringBackendConfig(kb, usingPasswordFile); err != nil {
+			return err
+		}
+		kr, err := keyring.New("", kb, homeDir, keyringInput, encodingConfig.Codec)
+		if err != nil {
+			if usingPasswordFile {
+				return fmt.Errorf("%w: could not initialize keyring backend %q: %w", ErrKeyringPasswordFile, kb, err)
+			}
+			return fmt.Errorf("could not initialize keyring backend %q: %w", kb, err)
+		}
 		record, err := kr.Key(keyName)
 		if err != nil {
-			return err
+			if usingPasswordFile {
+				return fmt.Errorf("%w: account %q could not be read from keyring backend %q: %w", ErrKeyringPasswordFile, keyName, kb, err)
+			}
+			return fmt.Errorf("account %q could not be read from keyring backend %q: %w", keyName, kb, err)
 		}
 		addr, err := record.GetAddress()
 		if err != nil {
 			return err
+		}
+		if usingPasswordFile {
+			if err := validateKeyringAccountUnlocked(kr, keyName); err != nil {
+				return err
+			}
+			c.logger.Info("KEYRING_PASSWORD_FILE unlocked keyring account successfully", "account", keyName, "address", addr.String())
 		}
 		c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
 		c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(addr)
