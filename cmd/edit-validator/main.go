@@ -58,7 +58,7 @@ func run() int {
 	ec := rsclient.CreateEncodingConfig()
 	stakingtypes.RegisterInterfaces(ec.InterfaceRegistry)
 
-	kr, fromAddr, conn, err := rsclient.NewRemoteSignerKeyring(ctx, "reporter", *signerAddr, *ca, *cert, *key)
+	kr, fromAddr, conn, err := rsclient.NewRemoteSignerKeyringTx(ctx, "reporter", *signerAddr, *ca, *cert, *key)
 	must("dial remote signer", err)
 	defer conn.Close()
 

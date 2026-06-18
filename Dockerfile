@@ -2,8 +2,8 @@
 # Dockerfile for the reporterd standalone binary.
 # Single module — the reporter does not depend on layer-monitor (the dispute
 # monitor is intentionally not included). It DOES depend on the
-# bridge-remote-signer/api module (mTLS + SignRaw types), which is vendored into
-# ./vendor-api in the build context and wired in via a relative replace below.
+# bridge-remote-signer/api module (mTLS + SignTx types), which is vendored into
+# ./vendor-api in the build context and wired in via the relative replace in go.mod.
 
 ### Build stage
 FROM golang:1.24-bookworm AS builder
@@ -13,10 +13,6 @@ WORKDIR /src
 ENV GOTOOLCHAIN=auto
 
 COPY . /src/
-
-# Point the bridge-remote-signer/api replace at the in-context vendored copy so
-# the build does not depend on a host path outside the Docker context.
-RUN sed -i 's#=> /home/tellor-io/bridge-remote-signer/api#=> ./vendor-api#' go.mod
 
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \

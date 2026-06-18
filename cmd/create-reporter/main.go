@@ -1,6 +1,7 @@
 // Command create-reporter submits a MsgCreateReporter for the operator account,
-// signing it through the remote signer (mTLS + SignRaw) — same path as the
-// reporter/unjail/create-validator commands, so no local private key is required.
+// signing it through the remote signer (mTLS + scope-checked SignTx) — same path
+// as the reporter/unjail/create-validator commands, so no local private key is
+// required. MsgCreateReporter must be on the signer's SignTx allowlist.
 // Creating a reporter auto-self-selects the creator's own delegation, so the
 // validator's self-bond becomes the reporter's stake.
 package main
@@ -57,7 +58,7 @@ func run() int {
 	ec := rsclient.CreateEncodingConfig()
 	reportertypes.RegisterInterfaces(ec.InterfaceRegistry)
 
-	kr, fromAddr, conn, err := rsclient.NewRemoteSignerKeyring(ctx, "reporter", *signerAddr, *ca, *cert, *key)
+	kr, fromAddr, conn, err := rsclient.NewRemoteSignerKeyringTx(ctx, "reporter", *signerAddr, *ca, *cert, *key)
 	must("dial remote signer", err)
 	defer conn.Close()
 

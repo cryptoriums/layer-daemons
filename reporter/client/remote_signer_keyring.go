@@ -234,24 +234,28 @@ func newKeyringFromRemoteSigner(ctx context.Context, keyName, addr, caCert, clie
 	if err != nil {
 		return nil, nil, "", nil, fmt.Errorf("dial remote signer at %s: %w", addr, err)
 	}
+	// Close the connection on any error path; cleared once we hand it to the caller.
+	ok := false
+	defer func() {
+		if !ok {
+			conn.Close()
+		}
+	}()
 
 	signerClient := signerv1.NewBridgeSignerClient(conn)
 
 	pubKeyResp, err := signerClient.GetPublicKey(ctx, &signerv1.GetPublicKeyRequest{})
 	if err != nil {
-		conn.Close()
 		return nil, nil, "", nil, fmt.Errorf("GetPublicKey from remote signer: %w", err)
 	}
 
 	addrResp, err := signerClient.GetAddress(ctx, &signerv1.GetAddressRequest{Prefix: "tellor"})
 	if err != nil {
-		conn.Close()
 		return nil, nil, "", nil, fmt.Errorf("GetAddress from remote signer: %w", err)
 	}
 
 	accAddr, err := sdk.AccAddressFromBech32(addrResp.Address)
 	if err != nil {
-		conn.Close()
 		return nil, nil, "", nil, fmt.Errorf("parse address %q from remote signer: %w", addrResp.Address, err)
 	}
 
@@ -263,10 +267,10 @@ func newKeyringFromRemoteSigner(ctx context.Context, keyName, addr, caCert, clie
 
 	kr, err := newRemoteSignerKeyring(keyName, pubKeyResp.PublicKey, signerClient, useSignTx)
 	if err != nil {
-		conn.Close()
 		return nil, nil, "", nil, err
 	}
 
+	ok = true
 	return kr, accAddr, chainID, conn, nil
 }
 

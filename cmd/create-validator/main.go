@@ -1,6 +1,7 @@
 // Command create-validator submits a MsgCreateValidator for the operator account,
-// signing it through the remote signer (mTLS + SignRaw) — the same path the reporter
-// and cmd/unjail use — so no local private key is required. The consensus pubkey is
+// signing it through the remote signer (mTLS + scope-checked SignTx) — the same path
+// the reporter and cmd/unjail use — so no local private key is required.
+// MsgCreateValidator must be on the signer's SignTx allowlist. The consensus pubkey is
 // the validator's ed25519 key (held by the remote signer / presented by the node).
 package main
 
@@ -63,7 +64,7 @@ func run() int {
 	ec := rsclient.CreateEncodingConfig()
 	stakingtypes.RegisterInterfaces(ec.InterfaceRegistry)
 
-	kr, fromAddr, conn, err := rsclient.NewRemoteSignerKeyring(ctx, "reporter", *signerAddr, *ca, *cert, *key)
+	kr, fromAddr, conn, err := rsclient.NewRemoteSignerKeyringTx(ctx, "reporter", *signerAddr, *ca, *cert, *key)
 	must("dial remote signer", err)
 	defer conn.Close()
 
