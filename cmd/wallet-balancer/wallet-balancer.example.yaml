@@ -1,0 +1,34 @@
+# wallet-balancer configuration.
+# Runs every `interval` on the signer server, signing with a LOCAL file key.
+
+# --- chain ---
+node: "tcp://127.0.0.1:26657"
+chain_id: "tellor-1"
+gas_prices: "0.000025loya"
+gas: 400000
+
+# --- local-key signing (no remote signer) ---
+keyring_backend: "file"
+keyring_dir: "/home/operator/.layer"
+key_name: "reporter"
+key_password_file: "/home/operator/.layer/keyring_pass.txt"
+# validator_address: "tellorvaloper1..."   # optional; derived from key if empty
+
+# --- scheduling ---
+interval: "24h"
+
+# --- unbonding ---
+unbond_amount_loya: 1000000000   # 1000 TRB per cycle; 0 disables
+
+# --- bridge (funds the Binance account) ---
+balance_to_keep_loya: 1000000000 # keep 1000 TRB on the layer wallet
+bridge_eth_address: "0x000000000000000000000000000000000000dEaD"
+bridge_threshold_trb: 10         # only bridge when wallet TRB >= this
+
+# --- Binance ---
+binance_api_key: "YOUR_BINANCE_API_KEY"
+binance_secret_key: "YOUR_BINANCE_SECRET_KEY"
+# binance_api_url: ""            # optional override for testing
+
+# --- metrics ---
+metrics_addr: ":9095"

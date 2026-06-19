@@ -378,14 +378,21 @@ func StartReporterDaemonTaskLoop(
 	wg.Add(1)
 	go client.MonitorForTippedQueries(ctx, wg)
 
-	wg.Add(1)
-	go client.WithdrawAndStakeEarnedRewardsPeriodically(ctx, wg)
+	// Claim-tips, auto-unbond and auto-bridge can be handled by the standalone
+	// wallet-balancer tool instead of the reporter. Setting --disable-auto-balancing
+	// (or DISABLE_AUTO_BALANCING) turns them off here to avoid both running them.
+	if viper.GetBool("disable-auto-balancing") {
+		client.logger.Info("auto-balancing disabled in reporter; expecting wallet-balancer to handle claim/unbond/bridge")
+	} else {
+		wg.Add(1)
+		go client.WithdrawAndStakeEarnedRewardsPeriodically(ctx, wg)
 
-	wg.Add(1)
-	go client.AutoUnbondStakePeriodically(ctx, wg)
+		wg.Add(1)
+		go client.AutoUnbondStakePeriodically(ctx, wg)
 
-	wg.Add(1)
-	go client.AutoBridgeWalletExcessPeriodically(ctx, wg)
+		wg.Add(1)
+		go client.AutoBridgeWalletExcessPeriodically(ctx, wg)
+	}
 
 	if client.refreshGasEstimatesInterval > 0 {
 		wg.Add(1)
