@@ -654,9 +654,6 @@ func StartReporterDaemonTaskLoop(
 	}()
 
 	wg.Add(1)
-	go client.RestorePrimaryEndpointsPeriodically(ctx, wg)
-
-	wg.Add(1)
 	go client.MonitorCyclelistQuery(ctx, wg)
 
 	wg.Add(1)
