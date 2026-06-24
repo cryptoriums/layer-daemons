@@ -156,46 +156,6 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 			},
 		},
 	},
-	"e010d752f28dcd2804004d0b57ab1bdc4eca092895d49160204120af11d15f3e": {
-		ID:                "e010d752f28dcd2804004d0b57ab1bdc4eca092895d49160204120af11d15f3e",
-		AggregationMethod: "median",
-		MinResponses:      1,
-		MaxSpreadPercent:  100.0,
-		ResponseType:      "ufixed256x18",
-		Endpoints: []EndpointConfig{
-			{
-				EndpointType: "coingeckoPro",
-				ResponsePath: []string{"noble-dollar-usdn", "usd"},
-				Params: map[string]string{
-					"coin_id": "noble-dollar-usdn",
-				},
-				MarketId: "USDN-USD",
-			},
-			{
-				EndpointType: "coinmarketcap",
-				ResponsePath: []string{"data", "36538", "quote", "USD", "price"},
-				Params: map[string]string{
-					// "symbol": "USDN",
-					"id": "36538",
-				},
-				MarketId: "USDN-USD",
-			},
-			{
-				EndpointType: "osmosis",
-				Handler:      "osmosis_pool_price_handler",
-				ResponsePath: []string{"pool"},
-				Params: map[string]string{
-					"pool_id":         "3061",
-					"target_token":    "ibc/0C39BD03B5C57A1753A9B73164705871A9B549F1A5226CFD7E39BE7BF73CF8CF",
-					"quote_token":     "ibc/498A0751C798A0D9A389AA3691123DADA57DAA4FE165D5C75894505B876BA6E4",
-					"target_decimals": "6",
-					"quote_decimals":  "6",
-				},
-				UsdViaID: exchange_common.USDCUSD_ID,
-				MarketId: "USDN-USD",
-			},
-		},
-	},
 	"59ae85cec665c779f18255dd4f3d97821e6a122691ee070b9a26888bc2a0e45a": {
 		ID:                "59ae85cec665c779f18255dd4f3d97821e6a122691ee070b9a26888bc2a0e45a",
 		AggregationMethod: "median",
@@ -226,21 +186,6 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 					"contract_address": "0xa3931d71877c0e7a3148cb7eb4463524fec27fbd",
 				},
 				MarketId: "SUSDS-USD",
-			},
-		},
-	},
-	"35155b44678db9e9e021c2cf49dd20c31b49e03415325c2beffb5221cf63882d": {
-		ID:                "35155b44678db9e9e021c2cf49dd20c31b49e03415325c2beffb5221cf63882d",
-		AggregationMethod: "median",
-		MaxSpreadPercent:  10.0,
-		MinResponses:      1,
-		ResponseType:      "ufixed256x18",
-		Endpoints: []EndpointConfig{
-			{
-				EndpointType: "contract",
-				Handler:      "yieldfi_yusd_handler",
-				Chain:        "ethereum",
-				MarketId:     "YTOKEN-USD",
 			},
 		},
 	},
@@ -394,21 +339,6 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 			},
 		},
 	},
-	"91513b15db3cef441d52058b24412957f9cc8645c53aecf39446ac9b0d2dcca4": {
-		ID:                "91513b15db3cef441d52058b24412957f9cc8645c53aecf39446ac9b0d2dcca4",
-		AggregationMethod: "median",
-		MaxSpreadPercent:  10.0,
-		MinResponses:      1,
-		ResponseType:      "ufixed256x18",
-		Endpoints: []EndpointConfig{
-			{
-				EndpointType: "contract",
-				Handler:      "yieldfi_vyusd_handler",
-				Chain:        "ethereum",
-				MarketId:     "VYUSD-USD",
-			},
-		},
-	},
 	"187f74d310dc494e6efd928107713d4229cd319c2cf300224de02776090809f1": {
 		ID:                "187f74d310dc494e6efd928107713d4229cd319c2cf300224de02776090809f1",
 		AggregationMethod: "median",
@@ -480,21 +410,6 @@ var StaticQueriesConfig = map[string]*QueryConfig{
 					"coinpaprika_response_path": []string{"quotes", "USD", "price"},
 				},
 				MarketId: "SFRXUSD-USD",
-			},
-		},
-	},
-	"9874c1c7b7e76b78afdfdda6dcecef56edf6bf3d49d6d6ef2a98404ea2e04a59": {
-		ID:                "9874c1c7b7e76b78afdfdda6dcecef56edf6bf3d49d6d6ef2a98404ea2e04a59",
-		AggregationMethod: "median",
-		MaxSpreadPercent:  10.0,
-		MinResponses:      1,
-		ResponseType:      "ufixed256x18",
-		Endpoints: []EndpointConfig{
-			{
-				EndpointType: "contract",
-				Handler:      "yieldfi_yeth_handler",
-				Chain:        "ethereum",
-				MarketId:     "YIELDFI-YETH-USD",
 			},
 		},
 	},
