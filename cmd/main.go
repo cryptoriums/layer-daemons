@@ -166,6 +166,8 @@ func init() {
 	rootCmd.Flags().Uint32("auto-unbonding-amount", 0, "Amount of tokens in loya to unbond each unbonding transaction (0 = disabled)")
 	rootCmd.Flags().String("auto-unbonding-max-stake-percentage", "0.0", "Maximum percentage of stake to unbond each unbonding transaction (0 = disabled, 1.0 = 100%). If unbonding amount exceeds this percentage, we will skip the unbonding transaction until it exceeds this percentage again.")
 	rootCmd.Flags().Duration("refresh-gas-estimates-interval", 12*time.Hour, "Interval for resetting cached gas estimates and gas-adjustment levels (<=0 disables)")
+	// Remote signer: when set, tx signing is delegated to the remote signer service instead of the local keyring
+	rootCmd.Flags().String("remote-signer-addr", "", "gRPC address of the remote signer service (e.g. localhost:9191). When set, tx signing uses the remote signer instead of the local keyring.")
 
 	// Auto-bridge: keep wallet at a fixed balance by bridging the excess to Ethereum
 	rootCmd.Flags().Uint64(daemonflags.FlagAutoBalanceToKeep, 0, "Keep this amount of loya in the wallet; bridge any excess to Ethereum at --auto-balance-execution-time (0 = disabled)")
