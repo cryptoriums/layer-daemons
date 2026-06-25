@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/spf13/viper"
 	globalfeetypes "github.com/strangelove-ventures/globalfee/x/globalfee/types"
@@ -182,18 +183,17 @@ type Client struct {
 	gasEstimator                *gasEstimateState
 
 	// Resources that need cleanup
-	grpcMu      sync.RWMutex
-	grpcConn    *grpc.ClientConn
-	grpcClient  daemontypes.GrpcClient
-	grpcManager *grpcEndpointManager
-	rpcMu       sync.RWMutex
-	rpcManager  *rpcEndpointManager
-
+	grpcMu           sync.RWMutex
+	grpcConn         *grpc.ClientConn
+	grpcClient       daemontypes.GrpcClient
+	rpcClient        *rpchttp.HTTP // direct reference for WebSocket subscriptions
+	grpcManager      *grpcEndpointManager
+	rpcMu            sync.RWMutex
+	rpcManager       *rpcEndpointManager
 	remoteSignerConn *grpc.ClientConn // non-nil when --remote-signer-addr is set
-
-	wg          sync.WaitGroup
-	broadcastWg sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
-	stopOnce    sync.Once
+	wg               sync.WaitGroup
+	broadcastWg      sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
+	stopOnce         sync.Once
 }
 
 // GetUniqueUnorderedTimeout generates a unique timeout timestamp for unordered transactions.
@@ -385,14 +385,13 @@ func (c *Client) Start(
 	if err != nil {
 		return fmt.Errorf("failed to initialize RPC endpoint manager: %w", err)
 	}
-	rpcClient, rpcEndpoint, err := rpcManager.currentClient()
+	rpcClientVal, rpcEndpoint, err := rpcManager.currentClient()
 	if err != nil {
 		return fmt.Errorf("failed to create RPC client: %w", err)
 	}
-	c.logger.Info("CometBFT RPC client established", "endpoint", rpcEndpoint)
 	c.rpcManager = rpcManager
-	c.setRPCClient(rpcClient)
-
+	c.setRPCClient(rpcClientVal)
+	c.logger.Info("CometBFT RPC client established", "endpoint", rpcEndpoint)
 	encodingConfig := CreateEncodingConfig()
 	c.cosmosCtx = c.cosmosCtx.WithCodec(encodingConfig.Codec).WithInterfaceRegistry(encodingConfig.InterfaceRegistry).WithTxConfig(encodingConfig.TxConfig)
 
@@ -574,56 +573,6 @@ func (c *Client) withGRPCFallback(ctx context.Context, operation string, call fu
 	return fmt.Errorf("%s failed on all gRPC endpoints: %w", operation, lastErr)
 }
 
-func (c *Client) RestorePrimaryEndpointsPeriodically(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	ticker := time.NewTicker(primaryEndpointCheckInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			c.tryRestorePrimaryRPCEndpoint(ctx)
-			c.tryRestorePrimaryGRPCEndpoint(ctx)
-		}
-	}
-}
-
-func (c *Client) tryRestorePrimaryRPCEndpoint(ctx context.Context) {
-	if c.rpcManager == nil || c.rpcManager.usingPrimary() {
-		return
-	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, primaryEndpointProbeTimeout)
-	defer cancel()
-
-	rpcClient, endpoint, err := c.rpcManager.primaryClient()
-	if err != nil {
-		c.logger.Warn("Primary CometBFT RPC endpoint is not ready", "endpoint", endpoint, "error", err)
-		return
-	}
-	status, err := rpcClient.Status(probeCtx)
-	if err != nil {
-		c.logger.Warn("Primary CometBFT RPC endpoint health check failed", "endpoint", endpoint, "error", err)
-		return
-	}
-	chainID := c.chainID()
-	if status.NodeInfo.Network != chainID {
-		c.logger.Warn(
-			"Primary CometBFT RPC endpoint returned unexpected chain ID",
-			"endpoint", endpoint,
-			"expected_chain_id", chainID,
-			"actual_chain_id", status.NodeInfo.Network,
-		)
-		return
-	}
-
-	c.setRPCClient(rpcClient)
-	c.rpcManager.switchToPrimary()
-}
-
 func (c *Client) tryRestorePrimaryGRPCEndpoint(ctx context.Context) {
 	if c.grpcManager == nil || c.grpcManager.usingPrimary() {
 		return
@@ -679,23 +628,9 @@ func (c *Client) closeGRPCConnection(conn *grpc.ClientConn) {
 	}
 }
 
-func (c *Client) setRPCClient(rpcClient client.CometRPC) {
-	c.rpcMu.Lock()
-	defer c.rpcMu.Unlock()
-	c.cosmosCtxMu.Lock()
-	defer c.cosmosCtxMu.Unlock()
-	c.cosmosCtx = c.cosmosCtx.WithClient(rpcClient)
-}
-
 func (c *Client) rpcContextWithClient(rpcClient client.CometRPC) client.Context {
 	clientCtx := c.currentCosmosContext()
 	return clientCtx.WithClient(rpcClient)
-}
-
-func (c *Client) currentCosmosContext() client.Context {
-	c.cosmosCtxMu.RLock()
-	defer c.cosmosCtxMu.RUnlock()
-	return c.cosmosCtx
 }
 
 func (c *Client) chainID() string {
@@ -778,6 +713,88 @@ func StartReporterDaemonTaskLoop(
 	}
 
 	wg.Wait()
+}
+
+func (c *Client) setRPCClient(rpcClient client.CometRPC) {
+	c.rpcMu.Lock()
+	defer c.rpcMu.Unlock()
+	c.cosmosCtxMu.Lock()
+	defer c.cosmosCtxMu.Unlock()
+	if httpClient, ok := rpcClient.(*rpchttp.HTTP); ok {
+		c.rpcClient = httpClient
+	}
+	c.cosmosCtx = c.cosmosCtx.WithClient(rpcClient)
+}
+
+func (c *Client) currentCosmosContext() client.Context {
+	c.cosmosCtxMu.RLock()
+	defer c.cosmosCtxMu.RUnlock()
+	return c.cosmosCtx
+}
+
+func (c *Client) RestorePrimaryEndpointsPeriodically(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	if c.rpcManager == nil {
+		return
+	}
+
+	ticker := time.NewTicker(primaryEndpointCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.tryRestorePrimaryRPCEndpoint(ctx)
+			c.tryRestorePrimaryGRPCEndpoint(ctx)
+		}
+	}
+}
+
+func (c *Client) tryRestorePrimaryRPCEndpoint(ctx context.Context) {
+	if c.rpcManager == nil || c.rpcManager.usingPrimary() {
+		return
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, primaryEndpointProbeTimeout)
+	defer cancel()
+
+	rpcClientVal, endpoint, err := c.rpcManager.primaryClient()
+	if err != nil {
+		c.logger.Warn("Primary CometBFT RPC endpoint is not ready", "endpoint", endpoint, "error", err)
+		return
+	}
+	httpClient, ok := rpcClientVal.(*rpchttp.HTTP)
+	if !ok {
+		return
+	}
+	if !httpClient.IsRunning() {
+		if err := httpClient.Start(); err != nil {
+			c.logger.Warn("Primary CometBFT RPC endpoint failed to start", "endpoint", endpoint, "error", err)
+			return
+		}
+	}
+	status, err := httpClient.Status(probeCtx)
+	if err != nil {
+		c.logger.Warn("Primary CometBFT RPC endpoint health check failed", "endpoint", endpoint, "error", err)
+		return
+	}
+	chainID := c.currentCosmosContext().ChainID
+	if status.NodeInfo.Network != chainID {
+		c.logger.Warn(
+			"Primary CometBFT RPC endpoint returned unexpected chain ID",
+			"endpoint", endpoint,
+			"expected_chain_id", chainID,
+			"actual_chain_id", status.NodeInfo.Network,
+		)
+		return
+	}
+
+	c.setRPCClient(rpcClientVal)
+	c.rpcManager.switchToPrimary()
+	c.logger.Info("CometBFT RPC endpoint restored to primary", "endpoint", endpoint)
 }
 
 func (c *Client) RefreshGasEstimatesPeriodically(ctx context.Context, wg *sync.WaitGroup) {
