@@ -8,9 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/singleflight"
-
 	"github.com/tellor-io/layer-daemons/custom_query/contracts/metrics"
+	"golang.org/x/sync/singleflight"
 )
 
 // The reporter polls the cyclelist roughly every 200ms, so a single custom
@@ -28,7 +27,7 @@ import (
 // Tuning (env vars, read once at startup):
 //   - CUSTOM_QUERY_CACHE_TTL : cache freshness window, a Go duration (e.g. "3s",
 //     "500ms"). Set to "0" to disable the cache entirely (pure pass-through to
-//     the previous behaviour). Defaults to defaultCacheTTL.
+//     the previous behavior). Defaults to defaultCacheTTL.
 //
 // Correctness note: the TTL bounds how stale a reported price can be, so it must
 // stay well under the chain's value-freshness expectations. The default is
