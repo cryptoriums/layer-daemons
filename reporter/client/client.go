@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -32,11 +34,27 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 )
 
-const defaultGas = uint64(240000)
+const (
+	defaultGas                   = uint64(240000)
+	primaryEndpointCheckInterval = 5 * time.Minute
+	primaryEndpointProbeTimeout  = 10 * time.Second
+)
+
+var ErrKeyringPasswordFile = errors.New("keyring password file validation failed")
+
+var validKeyringBackends = map[string]struct{}{
+	"os":      {},
+	"file":    {},
+	"kwallet": {},
+	"pass":    {},
+	"test":    {},
+	"memory":  {},
+}
 
 var (
 	commitedIds   = make(map[uint64]bool)
@@ -47,6 +65,83 @@ var (
 )
 
 var mutex = &sync.RWMutex{}
+
+type repeatingPasswordReader struct {
+	mu   sync.Mutex
+	line []byte
+	pos  int
+}
+
+func newRepeatingPasswordReader(pass string) io.Reader {
+	return &repeatingPasswordReader{line: []byte(pass + "\n")}
+}
+
+func (r *repeatingPasswordReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range p {
+		p[i] = r.line[r.pos]
+		r.pos = (r.pos + 1) % len(r.line)
+	}
+	return len(p), nil
+}
+
+// IsKeyringPasswordFileError reports whether startup failed while validating
+// KEYRING_PASSWORD_FILE or the account it is expected to unlock.
+func IsKeyringPasswordFileError(err error) bool {
+	return errors.Is(err, ErrKeyringPasswordFile)
+}
+
+// keyringReader returns an io.Reader for the keyring passphrase.
+// If KEYRING_PASSWORD_FILE is set, it reads the password from that file.
+// Otherwise it falls back to stdin for interactive use.
+func keyringReader() (io.Reader, bool, error) {
+	passFile := os.Getenv("KEYRING_PASSWORD_FILE")
+	if passFile == "" {
+		return os.Stdin, false, nil
+	}
+
+	data, err := os.ReadFile(passFile)
+	if err != nil {
+		return nil, true, fmt.Errorf("%w: could not read KEYRING_PASSWORD_FILE %q: %w", ErrKeyringPasswordFile, passFile, err)
+	}
+	pass := strings.TrimSpace(string(data))
+	if pass == "" {
+		return nil, true, fmt.Errorf("%w: KEYRING_PASSWORD_FILE %q is empty", ErrKeyringPasswordFile, passFile)
+	}
+
+	// The file backend may ask for the passphrase repeatedly while opening and
+	// signing. Keep answers available for the lifetime of the daemon.
+	return newRepeatingPasswordReader(pass), true, nil
+}
+
+func validateKeyringBackendConfig(backend string, usingPasswordFile bool) error {
+	backend = strings.TrimSpace(backend)
+	if backend == "" {
+		return fmt.Errorf("keyring-backend is required; set KEYRING_BACKEND or --keyring-backend")
+	}
+	if _, ok := validKeyringBackends[backend]; !ok {
+		return fmt.Errorf("unsupported keyring-backend %q; valid values are os, file, kwallet, pass, test, memory", backend)
+	}
+	if usingPasswordFile && backend != "file" {
+		return fmt.Errorf("%w: KEYRING_PASSWORD_FILE requires KEYRING_BACKEND=file, got %q", ErrKeyringPasswordFile, backend)
+	}
+	return nil
+}
+
+func validateKeyringAccountUnlocked(kr keyring.Keyring, keyName string) error {
+	sig, pubKey, err := kr.Sign(keyName, []byte("layer-daemons keyring unlock check"), signingtypes.SignMode_SIGN_MODE_DIRECT)
+	if err != nil {
+		return fmt.Errorf("%w: account %q could not be unlocked with KEYRING_PASSWORD_FILE: %w", ErrKeyringPasswordFile, keyName, err)
+	}
+	if len(sig) == 0 || pubKey == nil {
+		return fmt.Errorf("%w: account %q did not return a valid unlock signature", ErrKeyringPasswordFile, keyName)
+	}
+	return nil
+}
 
 type TxChannelInfo struct {
 	Msg         sdk.Msg
@@ -67,6 +162,7 @@ type Client struct {
 	GlobalfeeClient globalfeetypes.QueryClient
 	AuthClient      authtypes.QueryClient
 
+	cosmosCtxMu          sync.RWMutex
 	cosmosCtx            client.Context
 	MarketParams         []pricefeedtypes.MarketParam
 	MarketToExchange     *pricefeedservertypes.MarketToExchangePrices
@@ -79,17 +175,25 @@ type Client struct {
 	// logger is the logger for the daemon.
 	logger     log.Logger
 	txChan     chan TxChannelInfo
+	txMu       sync.RWMutex
+	txClosed   bool
 	PriceGuard *PriceGuard
 	// Gas estimate refresh interval; <=0 disables periodic refresh.
 	refreshGasEstimatesInterval time.Duration
 	gasEstimator                *gasEstimateState
 
 	// Resources that need cleanup
-	grpcConn    *grpc.ClientConn
-	grpcClient  daemontypes.GrpcClient
-	wg          sync.WaitGroup
-	broadcastWg sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
-	stopOnce    sync.Once
+	grpcMu           sync.RWMutex
+	grpcConn         *grpc.ClientConn
+	grpcClient       daemontypes.GrpcClient
+	rpcClient        *rpchttp.HTTP // direct reference for WebSocket subscriptions
+	grpcManager      *grpcEndpointManager
+	rpcMu            sync.RWMutex
+	rpcManager       *rpcEndpointManager
+	remoteSignerConn *grpc.ClientConn // non-nil when --remote-signer-addr is set
+	wg               sync.WaitGroup
+	broadcastWg      sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
+	stopOnce         sync.Once
 }
 
 // GetUniqueUnorderedTimeout generates a unique timeout timestamp for unordered transactions.
@@ -125,7 +229,7 @@ func NewClient(logger log.Logger, valGasMin string) *Client {
 func (c *Client) Start(
 	ctx context.Context,
 	flags daemonflags.DaemonFlags,
-	grpcAddress string,
+	grpcEndpoints []string,
 	grpcClient daemontypes.GrpcClient,
 	marketParams []pricefeedtypes.MarketParam,
 	marketToExchange *pricefeedservertypes.MarketToExchangePrices,
@@ -133,6 +237,7 @@ func (c *Client) Start(
 	tokenBridgeTipsCache *tokenbridgetipstypes.DepositTips,
 	custom_queries map[string]customquery.QueryConfig,
 	chainId string,
+	rpcEndpoints []string,
 ) error {
 	// Log the daemon flags.
 	c.logger.Info(
@@ -146,30 +251,20 @@ func (c *Client) Start(
 	c.TokenDepositsCache = tokenDepositsCache
 	c.TokenBridgeTipsCache = tokenBridgeTipsCache
 	c.Custom_query = custom_queries
-	// Make a connection to the Cosmos gRPC query services.
-	c.logger.Info("Establishing gRPC connection", "address", grpcAddress)
-	conn, err := grpcClient.NewTcpConnection(ctx, grpcAddress)
+	grpcManager, err := newGRPCEndpointManager(grpcEndpoints, c.logger, grpcClient)
 	if err != nil {
-		c.logger.Error("Failed to establish gRPC connection to Cosmos gRPC query services", "error", err, "address", grpcAddress)
-		return err
+		return fmt.Errorf("failed to initialize gRPC endpoint manager: %w", err)
 	}
-	c.logger.Info("gRPC connection established successfully", "address", grpcAddress)
-	// Store connection and grpcClient for cleanup
-	c.grpcConn = conn
+	c.grpcManager = grpcManager
 	c.grpcClient = grpcClient
 
-	// Initialize the query clients. These are used to query the Cosmos gRPC query services.
-	c.OracleQueryClient = oracletypes.NewQueryClient(conn)
-	c.BankClient = banktypes.NewQueryClient(conn)
-	c.ReporterClient = reportertypes.NewQueryClient(conn)
-	c.GlobalfeeClient = globalfeetypes.NewQueryClient(conn)
-	c.CmtService = cmtservice.NewServiceClient(conn)
-	c.AuthClient = authtypes.NewQueryClient(conn)
+	if err := c.connectInitialGRPCEndpoint(ctx); err != nil {
+		return err
+	}
 
 	keyName := viper.GetString("from")
 	homeDir := viper.GetString("home")
 	brdcstMode := viper.GetString("broadcast-mode")
-	nodeUri := viper.GetString("node")
 	kb := viper.GetString("keyring-backend")
 
 	// Read price guard config
@@ -230,7 +325,8 @@ func (c *Client) Start(
 
 	// Log price guard configuration
 	if priceGuardEnabled {
-		c.logger.Info("Price guard enabled",
+		c.logger.Info(
+			"Price guard enabled",
 			"threshold", fmt.Sprintf("%.5f%%", priceGuardThreshold*100),
 			"max_age", priceGuardMaxAge.String(),
 			"update_on_blocked", updateOnBlocked,
@@ -240,7 +336,8 @@ func (c *Client) Start(
 	}
 
 	if autoUnbondingFrequency > 0 {
-		c.logger.Info("Auto unbonding enabled",
+		c.logger.Info(
+			"Auto unbonding enabled",
 			"frequency", autoUnbondingFrequency,
 			"amount", autoUnbondingAmount,
 			"max_stake_percentage", autoUnbondingMaxStakePercentage,
@@ -262,7 +359,8 @@ func (c *Client) Start(
 		if _, _, err := parseAutoBalanceExecutionTime(viper.GetString(daemonflags.FlagAutoBalanceExecutionTime)); err != nil {
 			return err
 		}
-		c.logger.Info("Auto balance-to-keep enabled",
+		c.logger.Info(
+			"Auto balance-to-keep enabled",
 			"balance_to_keep_loya", autoBalanceToKeep,
 			"execution_time", viper.GetString(daemonflags.FlagAutoBalanceExecutionTime),
 			"eth_addr", "0x"+autoBalanceEthAddr,
@@ -280,34 +378,73 @@ func (c *Client) Start(
 	c.cosmosCtx = c.cosmosCtx.WithChainID(chainId)
 	c.cosmosCtx = c.cosmosCtx.WithHomeDir(homeDir)
 	c.cosmosCtx = c.cosmosCtx.WithKeyringDir(homeDir)
-	c.cosmosCtx = c.cosmosCtx.WithGRPCClient(conn)
 	c.cosmosCtx = c.cosmosCtx.WithBroadcastMode(brdcstMode)
 	c.cosmosCtx = c.cosmosCtx.WithAccountRetriever(authtypes.AccountRetriever{})
 
-	rpcClient, err := rpchttp.New(nodeUri, "/websocket")
+	rpcManager, err := newRPCEndpointManager(rpcEndpoints, c.logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize RPC endpoint manager: %w", err)
+	}
+	rpcClientVal, rpcEndpoint, err := rpcManager.currentClient()
 	if err != nil {
 		return fmt.Errorf("failed to create RPC client: %w", err)
 	}
-	c.cosmosCtx = c.cosmosCtx.WithClient(rpcClient)
-
+	c.rpcManager = rpcManager
+	c.setRPCClient(rpcClientVal)
+	c.logger.Info("CometBFT RPC client established", "endpoint", rpcEndpoint)
 	encodingConfig := CreateEncodingConfig()
 	c.cosmosCtx = c.cosmosCtx.WithCodec(encodingConfig.Codec).WithInterfaceRegistry(encodingConfig.InterfaceRegistry).WithTxConfig(encodingConfig.TxConfig)
-
-	kr, err := keyring.New("", kb, homeDir, os.Stdin, encodingConfig.Codec)
-	if err != nil {
-		return err
+	remoteSignerAddr := viper.GetString("remote-signer-addr")
+	if remoteSignerAddr != "" {
+		// Use remote signer for tx signing — no local private key needed.
+		c.logger.Info("Using remote signer for tx signing", "addr", remoteSignerAddr)
+		caCert := viper.GetString("remote-signer-ca-cert")
+		clientCert := viper.GetString("remote-signer-client-cert")
+		clientKey := viper.GetString("remote-signer-client-key")
+		kr, signerAccAddr, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr, caCert, clientCert, clientKey)
+		if err != nil {
+			return fmt.Errorf("failed to initialize remote signer keyring: %w", err)
+		}
+		// Store the connection so it gets closed during shutdown.
+		c.remoteSignerConn = signerConn
+		c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
+		c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(signerAccAddr)
+	} else {
+		keyringInput, usingPasswordFile, err := keyringReader()
+		if err != nil {
+			return err
+		}
+		if err := validateKeyringBackendConfig(kb, usingPasswordFile); err != nil {
+			return err
+		}
+		c.logger.Info("Using keyring backend", "backend", kb)
+		kr, err := keyring.New("", kb, homeDir, keyringInput, encodingConfig.Codec)
+		if err != nil {
+			if usingPasswordFile {
+				return fmt.Errorf("%w: could not initialize keyring backend %q: %w", ErrKeyringPasswordFile, kb, err)
+			}
+			return fmt.Errorf("could not initialize keyring backend %q: %w", kb, err)
+		}
+		record, err := kr.Key(keyName)
+		if err != nil {
+			if usingPasswordFile {
+				return fmt.Errorf("%w: account %q could not be read from keyring backend %q: %w", ErrKeyringPasswordFile, keyName, kb, err)
+			}
+			return fmt.Errorf("account %q could not be read from keyring backend %q: %w", keyName, kb, err)
+		}
+		addr, err := record.GetAddress()
+		if err != nil {
+			return err
+		}
+		if usingPasswordFile {
+			if err := validateKeyringAccountUnlocked(kr, keyName); err != nil {
+				return err
+			}
+			c.logger.Info("KEYRING_PASSWORD_FILE unlocked keyring account successfully", "account", keyName, "address", addr.String())
+		}
+		c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
+		c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(addr)
 	}
-	record, err := kr.Key(keyName)
-	if err != nil {
-		return err
-	}
-	addr, err := record.GetAddress()
-	if err != nil {
-		return err
-	}
-
-	c.cosmosCtx = c.cosmosCtx.WithKeyring(kr)
-	c.cosmosCtx = c.cosmosCtx.WithFrom(keyName).WithFromName(keyName).WithFromAddress(addr)
 	c.accAddr = c.cosmosCtx.GetFromAddress()
 
 	StartReporterDaemonTaskLoop(
@@ -318,6 +455,164 @@ func (c *Client) Start(
 	)
 
 	return nil
+}
+
+func (c *Client) connectInitialGRPCEndpoint(ctx context.Context) error {
+	c.logger.Info("Establishing gRPC connection", "endpoint", c.grpcManager.currentEndpoint())
+	conn, endpoint, err := c.grpcManager.currentConnection(ctx)
+	if err != nil {
+		c.logger.Warn("Failed to establish gRPC connection, trying fallback endpoint", "endpoint", endpoint, "error", err)
+		for attempt := 0; attempt < c.grpcManager.endpointCount()-1; attempt++ {
+			conn, endpoint, err = c.grpcManager.nextConnection(ctx)
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("failed to establish gRPC connection to Cosmos query services: %w", err)
+		}
+	}
+
+	c.setGRPCConnection(conn)
+	c.logger.Info("gRPC connection established successfully", "endpoint", endpoint)
+	return nil
+}
+
+func (c *Client) setGRPCConnection(conn *grpc.ClientConn) {
+	c.grpcConn = conn
+	c.cosmosCtxMu.Lock()
+	c.cosmosCtx = c.cosmosCtx.WithGRPCClient(conn)
+	c.cosmosCtxMu.Unlock()
+
+	// Rebuild all generated clients so subsequent queries use the active connection.
+	c.OracleQueryClient = oracletypes.NewQueryClient(conn)
+	c.BankClient = banktypes.NewQueryClient(conn)
+	c.ReporterClient = reportertypes.NewQueryClient(conn)
+	c.GlobalfeeClient = globalfeetypes.NewQueryClient(conn)
+	c.CmtService = cmtservice.NewServiceClient(conn)
+	c.AuthClient = authtypes.NewQueryClient(conn)
+}
+
+func (c *Client) withGRPCQueryClient(call func() error) error {
+	c.grpcMu.RLock()
+	defer c.grpcMu.RUnlock()
+	return call()
+}
+
+func (c *Client) reconnectGRPCEndpoint(ctx context.Context, operation string, lastErr error) error {
+	c.grpcMu.Lock()
+	defer c.grpcMu.Unlock()
+
+	oldConn := c.grpcConn
+	c.logger.Warn(
+		"Cosmos gRPC operation failed, trying fallback endpoint",
+		"operation", operation,
+		"endpoint", c.grpcManager.currentEndpoint(),
+		"error", lastErr,
+	)
+
+	conn, endpoint, err := c.grpcManager.nextConnection(ctx)
+	if err != nil {
+		return err
+	}
+	c.setGRPCConnection(conn)
+
+	if oldConn != nil && c.grpcClient != nil {
+		if err := c.grpcClient.CloseConnection(oldConn); err != nil {
+			c.logger.Warn("Failed to close previous gRPC connection", "error", err)
+		}
+	}
+	c.logger.Info("Cosmos gRPC connection re-established", "endpoint", endpoint)
+	return nil
+}
+
+func (c *Client) withGRPCFallback(ctx context.Context, operation string, call func() error) error {
+	err := c.withGRPCQueryClient(call)
+	if !shouldFallbackGRPCError(ctx, err) || c.grpcManager == nil {
+		return err
+	}
+
+	lastErr := err
+	for attempt := 0; attempt < c.grpcManager.endpointCount()-1; attempt++ {
+		if err := c.reconnectGRPCEndpoint(ctx, operation, lastErr); err != nil {
+			return fmt.Errorf("%s failed on gRPC endpoints: %w; last error: %w", operation, err, lastErr)
+		}
+
+		err = c.withGRPCQueryClient(call)
+		if err == nil {
+			return nil
+		}
+		if !shouldFallbackGRPCError(ctx, err) {
+			return err
+		}
+		lastErr = err
+	}
+
+	return fmt.Errorf("%s failed on all gRPC endpoints: %w", operation, lastErr)
+}
+
+func (c *Client) tryRestorePrimaryGRPCEndpoint(ctx context.Context) {
+	if c.grpcManager == nil || c.grpcManager.usingPrimary() {
+		return
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, primaryEndpointProbeTimeout)
+	defer cancel()
+
+	conn, endpoint, err := c.grpcManager.primaryConnection(probeCtx)
+	if err != nil {
+		c.logger.Warn("Primary Cosmos gRPC endpoint is not ready", "endpoint", endpoint, "error", err)
+		return
+	}
+
+	resp, err := cmtservice.NewServiceClient(conn).GetNodeInfo(probeCtx, &cmtservice.GetNodeInfoRequest{})
+	if err != nil {
+		c.closeGRPCConnection(conn)
+		c.logger.Warn("Primary Cosmos gRPC endpoint health check failed", "endpoint", endpoint, "error", err)
+		return
+	}
+	chainID := c.chainID()
+	if resp.DefaultNodeInfo.Network != chainID {
+		c.closeGRPCConnection(conn)
+		c.logger.Warn(
+			"Primary Cosmos gRPC endpoint returned unexpected chain ID",
+			"endpoint", endpoint,
+			"expected_chain_id", chainID,
+			"actual_chain_id", resp.DefaultNodeInfo.Network,
+		)
+		return
+	}
+
+	c.grpcMu.Lock()
+	if c.grpcManager.usingPrimary() {
+		c.grpcMu.Unlock()
+		c.closeGRPCConnection(conn)
+		return
+	}
+	oldConn := c.grpcConn
+	c.setGRPCConnection(conn)
+	c.grpcManager.switchToPrimary()
+	c.grpcMu.Unlock()
+
+	c.closeGRPCConnection(oldConn)
+}
+
+func (c *Client) closeGRPCConnection(conn *grpc.ClientConn) {
+	if conn == nil || c.grpcClient == nil {
+		return
+	}
+	if err := c.grpcClient.CloseConnection(conn); err != nil {
+		c.logger.Warn("Failed to close gRPC connection", "error", err)
+	}
+}
+
+func (c *Client) rpcContextWithClient(rpcClient client.CometRPC) client.Context {
+	clientCtx := c.currentCosmosContext()
+	return clientCtx.WithClient(rpcClient)
+}
+
+func (c *Client) chainID() string {
+	return c.currentCosmosContext().ChainID
 }
 
 func StartReporterDaemonTaskLoop(
@@ -351,6 +646,9 @@ func StartReporterDaemonTaskLoop(
 			client.logger.Warn("Reporter not found, retrying...", "selector_address", client.accAddr.String())
 		}
 	}
+
+	wg.Add(1)
+	go client.RestorePrimaryEndpointsPeriodically(ctx, wg)
 
 	select {
 	case <-ctx.Done():
@@ -395,6 +693,88 @@ func StartReporterDaemonTaskLoop(
 	wg.Wait()
 }
 
+func (c *Client) setRPCClient(rpcClient client.CometRPC) {
+	c.rpcMu.Lock()
+	defer c.rpcMu.Unlock()
+	c.cosmosCtxMu.Lock()
+	defer c.cosmosCtxMu.Unlock()
+	if httpClient, ok := rpcClient.(*rpchttp.HTTP); ok {
+		c.rpcClient = httpClient
+	}
+	c.cosmosCtx = c.cosmosCtx.WithClient(rpcClient)
+}
+
+func (c *Client) currentCosmosContext() client.Context {
+	c.cosmosCtxMu.RLock()
+	defer c.cosmosCtxMu.RUnlock()
+	return c.cosmosCtx
+}
+
+func (c *Client) RestorePrimaryEndpointsPeriodically(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	if c.rpcManager == nil {
+		return
+	}
+
+	ticker := time.NewTicker(primaryEndpointCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.tryRestorePrimaryRPCEndpoint(ctx)
+			c.tryRestorePrimaryGRPCEndpoint(ctx)
+		}
+	}
+}
+
+func (c *Client) tryRestorePrimaryRPCEndpoint(ctx context.Context) {
+	if c.rpcManager == nil || c.rpcManager.usingPrimary() {
+		return
+	}
+
+	probeCtx, cancel := context.WithTimeout(ctx, primaryEndpointProbeTimeout)
+	defer cancel()
+
+	rpcClientVal, endpoint, err := c.rpcManager.primaryClient()
+	if err != nil {
+		c.logger.Warn("Primary CometBFT RPC endpoint is not ready", "endpoint", endpoint, "error", err)
+		return
+	}
+	httpClient, ok := rpcClientVal.(*rpchttp.HTTP)
+	if !ok {
+		return
+	}
+	if !httpClient.IsRunning() {
+		if err := httpClient.Start(); err != nil {
+			c.logger.Warn("Primary CometBFT RPC endpoint failed to start", "endpoint", endpoint, "error", err)
+			return
+		}
+	}
+	status, err := httpClient.Status(probeCtx)
+	if err != nil {
+		c.logger.Warn("Primary CometBFT RPC endpoint health check failed", "endpoint", endpoint, "error", err)
+		return
+	}
+	chainID := c.currentCosmosContext().ChainID
+	if status.NodeInfo.Network != chainID {
+		c.logger.Warn(
+			"Primary CometBFT RPC endpoint returned unexpected chain ID",
+			"endpoint", endpoint,
+			"expected_chain_id", chainID,
+			"actual_chain_id", status.NodeInfo.Network,
+		)
+		return
+	}
+
+	c.setRPCClient(rpcClientVal)
+	c.rpcManager.switchToPrimary()
+	c.logger.Info("CometBFT RPC endpoint restored to primary", "endpoint", endpoint)
+}
+
 func (c *Client) RefreshGasEstimatesPeriodically(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	ticker := time.NewTicker(c.refreshGasEstimatesInterval)
@@ -427,7 +807,12 @@ func (c *Client) checkReporter(ctx context.Context) bool {
 		}
 
 		// First try to check if the address is a reporter directly
-		reporterResp, err := c.ReporterClient.Reporter(ctx, &reportertypes.QueryReporterRequest{ReporterAddress: c.accAddr.String()})
+		var reporterResp *reportertypes.QueryReporterResponse
+		err := c.withGRPCFallback(ctx, "reporter lookup", func() error {
+			var err error
+			reporterResp, err = c.ReporterClient.Reporter(ctx, &reportertypes.QueryReporterRequest{ReporterAddress: c.accAddr.String()})
+			return err
+		})
 		if err == nil {
 			c.logger.Info("Reporter found (direct)", "address", c.accAddr.String(), "reporter", reporterResp)
 			return true
@@ -441,7 +826,12 @@ func (c *Client) checkReporter(ctx context.Context) bool {
 
 		c.logger.Debug("Direct reporter check failed, trying selector", "error", err, "address", c.accAddr.String())
 		// If not a reporter, check if it's a selector that has selected a reporter
-		selectorResp, err := c.ReporterClient.SelectorReporter(ctx, &reportertypes.QuerySelectorReporterRequest{SelectorAddress: c.accAddr.String()})
+		var selectorResp *reportertypes.QuerySelectorReporterResponse
+		err = c.withGRPCFallback(ctx, "selector reporter lookup", func() error {
+			var err error
+			selectorResp, err = c.ReporterClient.SelectorReporter(ctx, &reportertypes.QuerySelectorReporterRequest{SelectorAddress: c.accAddr.String()})
+			return err
+		})
 		if err == nil {
 			c.logger.Info("Reporter found (via selector)", "address", c.accAddr.String(), "reporter", selectorResp.Reporter)
 			return true
@@ -479,6 +869,13 @@ func isConnectionError(err error) bool {
 // trySend attempts to send to txChan but returns false if the context is canceled.
 // This prevents panics from sending on a closed channel during shutdown.
 func (c *Client) trySend(ctx context.Context, info TxChannelInfo) bool {
+	c.txMu.RLock()
+	defer c.txMu.RUnlock()
+	if c.txClosed {
+		c.logger.Debug("trySend: tx channel closed, dropping tx")
+		return false
+	}
+
 	select {
 	case c.txChan <- info:
 		return true
@@ -486,6 +883,16 @@ func (c *Client) trySend(ctx context.Context, info TxChannelInfo) bool {
 		c.logger.Debug("trySend: context canceled, dropping tx")
 		return false
 	}
+}
+
+func (c *Client) closeTxChan() {
+	c.txMu.Lock()
+	defer c.txMu.Unlock()
+	if c.txClosed {
+		return
+	}
+	close(c.txChan)
+	c.txClosed = true
 }
 
 func normalizeAutoBalanceEthAddr(addr string) (string, error) {
@@ -517,8 +924,8 @@ func (c *Client) Stop() {
 	c.stopOnce.Do(func() {
 		c.logger.Debug("ReporterClient: initiating shutdown")
 
-		// Close the transaction channel to signal BroadcastTxMsgToChain to stop
-		close(c.txChan)
+		// Close the transaction channel to signal BroadcastTxMsgToChain to stop.
+		c.closeTxChan()
 
 		// Wait for all goroutines to finish
 		c.wg.Wait()
@@ -527,9 +934,18 @@ func (c *Client) Stop() {
 		c.broadcastWg.Wait()
 
 		// Close gRPC connection
+		c.grpcMu.Lock()
+		defer c.grpcMu.Unlock()
 		if c.grpcConn != nil && c.grpcClient != nil {
 			if err := c.grpcClient.CloseConnection(c.grpcConn); err != nil {
 				c.logger.Error("Failed to close gRPC connection", "error", err)
+			}
+		}
+
+		// Close remote signer connection if used
+		if c.remoteSignerConn != nil {
+			if err := c.remoteSignerConn.Close(); err != nil {
+				c.logger.Error("Failed to close remote signer connection", "error", err)
 			}
 		}
 

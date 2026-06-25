@@ -1,8 +1,8 @@
 module github.com/tellor-io/layer-daemons
 
-go 1.23.2
+go 1.24.0
 
-toolchain go1.23.7
+toolchain go1.24.1
 
 require (
 	cosmossdk.io/errors v1.0.2
@@ -30,7 +30,7 @@ require (
 	github.com/tellor-io/layer v0.0.0-20260102193944-693854ff6bff
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
 	google.golang.org/genproto/googleapis/api v0.0.0-20250528174236-200df99c418a
-	google.golang.org/grpc v1.72.2
+	google.golang.org/grpc v1.79.3
 	gopkg.in/typ.v4 v4.3.0
 )
 
@@ -87,8 +87,8 @@ require (
 	go.uber.org/mock v0.5.2 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/arch v0.15.0 // indirect
-	golang.org/x/text v0.27.0 // indirect
-	google.golang.org/protobuf v1.36.6 // indirect
+	golang.org/x/text v0.32.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )
 
@@ -149,7 +149,7 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/snappy v0.0.5-0.20220116011046-fa5810519dcb // indirect
 	github.com/google/btree v1.1.3 // indirect
-	github.com/google/flatbuffers v1.12.1 // indirect
+	github.com/google/flatbuffers v2.0.8+incompatible // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/orderedcode v0.0.1 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
@@ -230,16 +230,16 @@ require (
 	go.opentelemetry.io/otel/metric v1.34.0 // indirect
 	go.opentelemetry.io/otel/trace v1.34.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.40.0
-	golang.org/x/net v0.41.0 // indirect
+	golang.org/x/crypto v0.46.0
+	golang.org/x/net v0.48.0 // indirect
 	golang.org/x/oauth2 v0.26.0 // indirect
-	golang.org/x/sync v0.16.0
-	golang.org/x/sys v0.34.0 // indirect
-	golang.org/x/term v0.33.0 // indirect
+	golang.org/x/sync v0.19.0
+	golang.org/x/sys v0.39.0 // indirect
+	golang.org/x/term v0.38.0 // indirect
 	golang.org/x/time v0.9.0 // indirect
 	google.golang.org/api v0.215.0 // indirect
 	google.golang.org/genproto v0.0.0-20241118233622-e639e219e697 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250528174236-200df99c418a // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 	nhooyr.io/websocket v1.8.10 // indirect
@@ -257,3 +257,11 @@ replace (
 replace cosmossdk.io/collections => cosmossdk.io/collections v0.4.0
 
 replace cosmossdk.io/core => cosmossdk.io/core v0.11.0
+
+require github.com/tellor-io/bridge-remote-signer/api v0.0.0
+
+replace github.com/tellor-io/bridge-remote-signer/api => ./vendor-api
+
+// Pin grpc to the version already used by this module to prevent the bridge-remote-signer/api
+// dependency from upgrading it (which would pull in incompatible otel semconv versions).
+replace google.golang.org/grpc => google.golang.org/grpc v1.72.2

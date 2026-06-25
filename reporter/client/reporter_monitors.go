@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/shirou/gopsutil/v3/process"
 	"github.com/spf13/viper"
@@ -23,20 +24,230 @@ import (
 	"cosmossdk.io/math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/bech32"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 const (
-	defaultQueryTimeout = 10 * time.Second
-	defaultTxTimeout    = 10 * time.Second
-	defaultRetryDelay   = 200 * time.Millisecond
-	maxRetryDelay       = 30 * time.Second
+	defaultQueryTimeout          = 10 * time.Second
+	defaultTxTimeout             = 10 * time.Second
+	defaultRetryDelay            = 200 * time.Millisecond
+	maxRetryDelay                = 30 * time.Second
+	reportersValidatorAddressEnv = "REPORTERS_VALIDATOR_ADDRESS"
 )
+
+// toValidatorOperator converts a tellor1xxx bech32 address to its tellorvaloper1xxx
+// counterpart by re-encoding the same underlying bytes with the validator prefix.
+func toValidatorOperator(walletAddr string) string {
+	if walletAddr == "" {
+		return ""
+	}
+	_, addrBytes, err := bech32.DecodeAndConvert(walletAddr)
+	if err != nil {
+		return ""
+	}
+	valoperAddr, err := bech32.ConvertAndEncode("tellorvaloper", addrBytes)
+	if err != nil {
+		return ""
+	}
+	return valoperAddr
+}
+
+func validatorOperatorAddress(reporterAddr string) (string, string, error) {
+	configuredAddr := strings.TrimSpace(os.Getenv(reportersValidatorAddressEnv))
+	if configuredAddr != "" {
+		prefix, _, err := bech32.DecodeAndConvert(configuredAddr)
+		if err != nil {
+			return "", "", fmt.Errorf("%s is not a valid bech32 address: %w", reportersValidatorAddressEnv, err)
+		}
+		if prefix != "tellorvaloper" {
+			return "", "", fmt.Errorf("%s must use tellorvaloper prefix, got %q", reportersValidatorAddressEnv, prefix)
+		}
+		return configuredAddr, reportersValidatorAddressEnv, nil
+	}
+
+	valAddr := toValidatorOperator(reporterAddr)
+	if valAddr == "" {
+		return "", "", fmt.Errorf("could not derive validator operator address from reporter address")
+	}
+	return valAddr, "derived", nil
+}
 
 func (c *Client) MonitorCyclelistQuery(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	// Try to use event-driven detection (reacts within milliseconds of each new block).
+	// Falls back to 200ms ticker polling if the WebSocket subscription fails.
+	blockCh, unsubscribe, err := c.subscribeNewBlocks(ctx)
+	if err != nil {
+		c.logger.Warn("block subscription failed, falling back to polling", "error", err)
+		c.monitorCyclelistQueryPolling(ctx)
+		return
+	}
+	defer unsubscribe()
+	c.logger.Info("MonitorCyclelistQuery: using event-driven block subscription")
+
+	// Fallback ticker: if no block event is received for 2s (e.g. slow node), poll anyway.
+	const blockEventTimeout = 2 * time.Second
+	fallback := time.NewTimer(blockEventTimeout)
+	defer fallback.Stop()
+
+	prevQueryData := []byte{}
+
+	checkCycle := func() {
+		queryCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
+		querydata, querymeta, err := c.CurrentQuery(queryCtx)
+		cancel()
+
+		if err != nil || querymeta == nil {
+			c.logger.Error("query failed", "error", err)
+			return
+		}
+
+		mutex.Lock()
+		hasCommited := commitedIds[querymeta.Id]
+		mutex.Unlock()
+		if bytes.Equal(querydata, prevQueryData) || hasCommited {
+			return
+		}
+
+		txCtx, cancel := context.WithTimeout(ctx, defaultTxTimeout)
+		done := make(chan struct{})
+
+		c.logger.Info(fmt.Sprintf("starting to generate spot price report at %d", time.Now().Unix()))
+		go func() {
+			defer close(done)
+			if err := c.GenerateAndBroadcastSpotPriceReport(txCtx, querydata, querymeta); err != nil {
+				c.logger.Error("report generation failed", "error", err)
+			}
+		}()
+
+		select {
+		case <-done:
+			cancel()
+		case <-txCtx.Done():
+			c.logger.Error(fmt.Sprintf("report generation timed out at %d", time.Now().Unix()))
+			cancel()
+		}
+
+		prevQueryData = querydata
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-blockCh:
+			if !ok {
+				// Channel closed; try to re-subscribe on a fallback RPC endpoint.
+				unsubscribe()
+				c.logger.Warn("block subscription channel closed, trying fallback RPC endpoint")
+				blockCh, unsubscribe, err = c.subscribeNewBlocks(ctx)
+				if err != nil {
+					c.logger.Warn("block subscription failed on all RPC endpoints, falling back to polling", "error", err)
+					c.monitorCyclelistQueryPolling(ctx)
+					return
+				}
+				fallback.Reset(blockEventTimeout)
+				continue
+			}
+			fallback.Reset(blockEventTimeout)
+			checkCycle()
+		case <-fallback.C:
+			// No block event received within timeout; check anyway and reset.
+			fallback.Reset(blockEventTimeout)
+			checkCycle()
+		}
+	}
+}
+
+// subscribeNewBlocks subscribes to CometBFT NewBlock events over WebSocket.
+// Returns a channel that receives one value per block, an unsubscribe func, and any error.
+// Tries each RPC endpoint in rpcManager before returning an error.
+func (c *Client) subscribeNewBlocks(ctx context.Context) (<-chan struct{}, func(), error) {
+	if c.rpcManager == nil {
+		if c.rpcClient == nil {
+			return nil, func() {}, fmt.Errorf("rpc client not initialized")
+		}
+		return c.subscribeNewBlocksWithClient(ctx, c.rpcClient, "current")
+	}
+
+	var errs []string
+	rpcClientVal, endpoint, err := c.rpcManager.currentClient()
+	if err != nil {
+		errs = append(errs, fmt.Sprintf("%s: %v", endpoint, err))
+	} else if blockCh, unsubscribe, err := c.subscribeNewBlocksWithClient(ctx, rpcClientVal, endpoint); err == nil {
+		c.setRPCClient(rpcClientVal)
+		return blockCh, unsubscribe, nil
+	} else {
+		errs = append(errs, fmt.Sprintf("%s: %v", endpoint, err))
+	}
+
+	for attempt := 0; attempt < c.rpcManager.endpointCount()-1; attempt++ {
+		rpcClientVal, endpoint, err = c.rpcManager.nextClient()
+		if err != nil {
+			errs = append(errs, err.Error())
+			break
+		}
+		blockCh, unsubscribe, err := c.subscribeNewBlocksWithClient(ctx, rpcClientVal, endpoint)
+		if err == nil {
+			c.setRPCClient(rpcClientVal)
+			return blockCh, unsubscribe, nil
+		}
+		errs = append(errs, fmt.Sprintf("%s: %v", endpoint, err))
+	}
+
+	return nil, func() {}, fmt.Errorf("subscribing to NewBlock events on RPC endpoints: %s", strings.Join(errs, "; "))
+}
+
+func (c *Client) subscribeNewBlocksWithClient(ctx context.Context, rpcClientVal interface{}, endpoint string) (<-chan struct{}, func(), error) {
+	httpClient, ok := rpcClientVal.(*rpchttp.HTTP)
+	if !ok {
+		return nil, func() {}, fmt.Errorf("RPC client for %s does not support WebSocket subscriptions", endpoint)
+	}
+	if !httpClient.IsRunning() {
+		if err := httpClient.Start(); err != nil {
+			return nil, func() {}, fmt.Errorf("starting rpc client for WebSocket: %w", err)
+		}
+	}
+	subscriber := fmt.Sprintf("reporter-cycle-monitor-%d", time.Now().UnixNano())
+	eventCh, err := httpClient.Subscribe(ctx, subscriber, "tm.event='NewBlock'")
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("subscribing to NewBlock events: %w", err)
+	}
+
+	blockCh := make(chan struct{}, 1)
+	go func() {
+		defer close(blockCh)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-eventCh:
+				if !ok {
+					return
+				}
+				// Non-blocking send: if the consumer is busy processing the previous block,
+				// skip this event rather than queuing up a backlog.
+				select {
+				case blockCh <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
+	unsubscribe := func() {
+		_ = httpClient.Unsubscribe(ctx, subscriber, "tm.event='NewBlock'")
+	}
+	return blockCh, unsubscribe, nil
+}
+
+// monitorCyclelistQueryPolling is the fallback ticker-based implementation used when
+// the WebSocket block subscription is unavailable.
+func (c *Client) monitorCyclelistQueryPolling(ctx context.Context) {
 	prevQueryData := []byte{}
 	retryDelay := defaultRetryDelay
 	ticker := time.NewTicker(defaultRetryDelay)
@@ -147,14 +358,19 @@ func (c *Client) MonitorForTippedQueries(ctx context.Context, wg *sync.WaitGroup
 			return
 		case <-ticker.C:
 			queryCtx, cancel := context.WithTimeout(ctx, defaultQueryTimeout)
-			res, err := c.OracleQueryClient.TippedQueriesForDaemon(queryCtx, &oracletypes.QueryTippedQueriesForDaemonRequest{
-				Pagination: &query.PageRequest{
-					Offset: 0,
-				},
+			var res *oracletypes.QueryTippedQueriesForDaemonResponse
+			err := c.withGRPCFallback(queryCtx, "tipped queries lookup", func() error {
+				var err error
+				res, err = c.OracleQueryClient.TippedQueriesForDaemon(queryCtx, &oracletypes.QueryTippedQueriesForDaemonRequest{
+					Pagination: &query.PageRequest{
+						Offset: 0,
+					},
+				})
+				return err
 			})
 			cancel()
 
-			if err != nil || len(res.Queries) == 0 {
+			if err != nil || res == nil || len(res.Queries) == 0 {
 				if err != nil {
 					// Exponential backoff on error
 					retryDelay *= 2
@@ -172,7 +388,7 @@ func (c *Client) MonitorForTippedQueries(ctx context.Context, wg *sync.WaitGroup
 				ticker.Reset(retryDelay)
 			}
 
-			status, err := c.cosmosCtx.Client.Status(ctx)
+			status, err := c.Status(ctx)
 			if err != nil {
 				continue
 			}
@@ -247,9 +463,9 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 		default:
 		}
 
-		valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
-		if valAddr == "" {
-			fmt.Println("Returning from Withdraw Monitor due to no validator address env variable was found")
+		valAddr, valAddrSource, err := validatorOperatorAddress(c.accAddr.String())
+		if err != nil {
+			c.logger.Error("could not resolve validator operator address", "error", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -257,6 +473,7 @@ func (c *Client) WithdrawAndStakeEarnedRewardsPeriodically(ctx context.Context, 
 			}
 			continue
 		}
+		c.logger.Info("Using validator operator address for reward withdrawal", "validator_address", valAddr, "source", valAddrSource)
 
 		withdrawMsg := &reportertypes.MsgWithdrawTip{
 			SelectorAddress:  c.accAddr.String(),
@@ -292,19 +509,25 @@ func (c *Client) AutoUnbondStakePeriodically(ctx context.Context, wg *sync.WaitG
 		panic(err)
 	}
 	unbondAmount := math.NewInt(int64(amount))
-	valAddr := os.Getenv("REPORTERS_VALIDATOR_ADDRESS")
-	if valAddr == "" {
-		fmt.Println("Returning from Auto Unbond Monitor due to no validator address env variable was found")
+	valAddr, valAddrSource, err := validatorOperatorAddress(c.accAddr.String())
+	if err != nil {
+		c.logger.Error("could not resolve validator operator address, auto-unbonding disabled", "error", err)
 		return
 	}
+	c.logger.Info("Using validator operator address for auto-unbonding", "validator_address", valAddr, "source", valAddrSource)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			c.logger.Info("Trying to unbond stake")
-			reporterData, err := c.ReporterClient.SelectionsTo(ctx, &reportertypes.QuerySelectionsToRequest{
-				ReporterAddress: c.accAddr.String(),
+			var reporterData *reportertypes.QuerySelectionsToResponse
+			err := c.withGRPCFallback(ctx, "reporter selections lookup", func() error {
+				var err error
+				reporterData, err = c.ReporterClient.SelectionsTo(ctx, &reportertypes.QuerySelectionsToRequest{
+					ReporterAddress: c.accAddr.String(),
+				})
+				return err
 			})
 			if err != nil {
 				c.logger.Error("error getting reporter data", "error", err)
@@ -384,9 +607,14 @@ func (c *Client) AutoBridgeWalletExcessPeriodically(ctx context.Context, wg *syn
 
 		c.logger.Info("Auto balance-to-keep: checking wallet balance")
 
-		balResp, err := c.BankClient.Balance(ctx, &banktypes.QueryBalanceRequest{
-			Address: c.accAddr.String(),
-			Denom:   "loya",
+		var balResp *banktypes.QueryBalanceResponse
+		err = c.withGRPCFallback(ctx, "wallet balance lookup", func() error {
+			var err error
+			balResp, err = c.BankClient.Balance(ctx, &banktypes.QueryBalanceRequest{
+				Address: c.accAddr.String(),
+				Denom:   "loya",
+			})
+			return err
 		})
 		if err != nil {
 			c.logger.Error("auto balance-to-keep: failed to query wallet balance", "error", err)
