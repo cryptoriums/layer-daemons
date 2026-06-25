@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/spf13/viper"
-	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	globalfeetypes "github.com/strangelove-ventures/globalfee/x/globalfee/types"
 	customquery "github.com/tellor-io/layer-daemons/custom_query"
 	daemonflags "github.com/tellor-io/layer-daemons/flags"
@@ -183,20 +183,17 @@ type Client struct {
 	gasEstimator                *gasEstimateState
 
 	// Resources that need cleanup
-	grpcMu      sync.RWMutex
-	grpcConn    *grpc.ClientConn
-	grpcClient  daemontypes.GrpcClient
-
-	rpcClient   *rpchttp.HTTP // direct reference for WebSocket subscriptions
-	grpcManager *grpcEndpointManager
-	rpcMu       sync.RWMutex
-	rpcManager  *rpcEndpointManager
-
+	grpcMu           sync.RWMutex
+	grpcConn         *grpc.ClientConn
+	grpcClient       daemontypes.GrpcClient
+	rpcClient        *rpchttp.HTTP // direct reference for WebSocket subscriptions
+	grpcManager      *grpcEndpointManager
+	rpcMu            sync.RWMutex
+	rpcManager       *rpcEndpointManager
 	remoteSignerConn *grpc.ClientConn // non-nil when --remote-signer-addr is set
-
-	wg          sync.WaitGroup
-	broadcastWg sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
-	stopOnce    sync.Once
+	wg               sync.WaitGroup
+	broadcastWg      sync.WaitGroup // Tracks goroutines in BroadcastTxMsgToChain
+	stopOnce         sync.Once
 }
 
 // GetUniqueUnorderedTimeout generates a unique timeout timestamp for unordered transactions.
@@ -394,15 +391,17 @@ func (c *Client) Start(
 	}
 	c.rpcManager = rpcManager
 	c.setRPCClient(rpcClientVal)
-        c.logger.Info("CometBFT RPC client established", "endpoint", rpcEndpoint)
+	c.logger.Info("CometBFT RPC client established", "endpoint", rpcEndpoint)
 	encodingConfig := CreateEncodingConfig()
 	c.cosmosCtx = c.cosmosCtx.WithCodec(encodingConfig.Codec).WithInterfaceRegistry(encodingConfig.InterfaceRegistry).WithTxConfig(encodingConfig.TxConfig)
-
 	remoteSignerAddr := viper.GetString("remote-signer-addr")
 	if remoteSignerAddr != "" {
 		// Use remote signer for tx signing — no local private key needed.
 		c.logger.Info("Using remote signer for tx signing", "addr", remoteSignerAddr)
-		kr, signerAccAddr, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr)
+		caCert := viper.GetString("remote-signer-ca-cert")
+		clientCert := viper.GetString("remote-signer-client-cert")
+		clientKey := viper.GetString("remote-signer-client-key")
+		kr, signerAccAddr, signerConn, err := newKeyringFromRemoteSigner(ctx, keyName, remoteSignerAddr, caCert, clientCert, clientKey)
 		if err != nil {
 			return fmt.Errorf("failed to initialize remote signer keyring: %w", err)
 		}
@@ -727,7 +726,7 @@ func (c *Client) RestorePrimaryEndpointsPeriodically(ctx context.Context, wg *sy
 			return
 		case <-ticker.C:
 			c.tryRestorePrimaryRPCEndpoint(ctx)
-                        c.tryRestorePrimaryGRPCEndpoint(ctx)
+			c.tryRestorePrimaryGRPCEndpoint(ctx)
 		}
 	}
 }
