@@ -2,35 +2,41 @@ package dispute
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rs/zerolog"
+	disputetypes "github.com/tellor-io/layer/x/dispute/types"
 
 	"cosmossdk.io/log"
+
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 )
 
-var queryInterval = 50 * time.Millisecond
+var (
+	queryInterval = 50 * time.Millisecond
+	testCodec     = codec.NewProtoCodec(codectypes.NewInterfaceRegistry())
+)
 
 func testLogger() log.Logger {
 	return log.NewLogger(os.Stderr, log.LevelOption(zerolog.DebugLevel), log.ColorOption(false))
 }
 
-// mockOpenDisputesResponse returns the open-disputes JSON. IDs are encoded as strings to
-// match cosmos proto-JSON for uint64.
+// mockOpenDisputesResponse marshals the actual layer response struct so the test exercises
+// the real proto-JSON shape (and breaks if the upstream struct changes).
 func mockOpenDisputesResponse(ids []uint64) []byte {
-	strs := make([]string, len(ids))
-	for i, id := range ids {
-		strs[i] = strconv.FormatUint(id, 10)
+	resp := &disputetypes.QueryOpenDisputesResponse{
+		OpenDisputes: &disputetypes.OpenDisputes{Ids: ids},
 	}
-	resp := map[string]any{"openDisputes": map[string]any{"ids": strs}}
-	b, _ := json.Marshal(resp)
+	b, err := testCodec.MarshalJSON(resp)
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 
@@ -124,12 +130,15 @@ func TestDoesNotPanicWhenDisputeIsIgnored(t *testing.T) {
 	}
 }
 
-func TestDisabledMonitorDoesNothing(t *testing.T) {
-	srv := serveDisputes([]uint64{7})
+func TestErrorsOnMalformedResponse(t *testing.T) {
+	// A response missing the openDisputes structure must be treated as an error (no panic).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
 	defer srv.Close()
-	m := New(testLogger(), Config{Enabled: false, LayerAPIURLs: []string{srv.URL}, CheckInterval: queryInterval})
-	// CheckBeforeStart and Run must be no-ops when disabled (no panic).
-	m.CheckBeforeStart(context.Background())
+	if panicked, msg := runExpectPanic(t, Config{LayerAPIURLs: []string{srv.URL}, CheckInterval: queryInterval}); panicked {
+		t.Fatalf("monitor panicked on a malformed response (should treat as error): %q", msg)
+	}
 }
 
 func TestIsIgnored(t *testing.T) {

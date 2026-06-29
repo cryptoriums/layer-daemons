@@ -10,7 +10,6 @@ package dispute
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,9 +18,13 @@ import (
 	"time"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
+	disputetypes "github.com/tellor-io/layer/x/dispute/types"
 	"golang.org/x/sync/errgroup"
 
 	"cosmossdk.io/log"
+
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 )
 
 const (
@@ -44,6 +47,7 @@ type Monitor struct {
 	cfg        Config
 	logger     log.Logger
 	httpClient *http.Client
+	cdc        codec.JSONCodec
 }
 
 func New(logger log.Logger, cfg Config) *Monitor {
@@ -54,20 +58,15 @@ func New(logger log.Logger, cfg Config) *Monitor {
 		cfg:        cfg,
 		logger:     logger.With("component", Component),
 		httpClient: &http.Client{Timeout: 10 * time.Second},
+		cdc:        codec.NewProtoCodec(codectypes.NewInterfaceRegistry()),
 	}
 }
 
-// Enabled reports whether the monitor is turned on.
-func (m *Monitor) Enabled() bool { return m.cfg.Enabled }
-
 // CheckBeforeStart runs one synchronous dispute check before the reporter starts any other
 // component. If there is an open, non-ignored dispute it panics — so the reporter never
-// starts reporting while a dispute is open. No-op when disabled.
+// starts reporting while a dispute is open. The caller only constructs the monitor when it
+// is enabled.
 func (m *Monitor) CheckBeforeStart(ctx context.Context) {
-	if !m.cfg.Enabled {
-		m.logger.Info("dispute monitor disabled")
-		return
-	}
 	if len(m.cfg.LayerAPIURLs) == 0 {
 		m.logger.Error("dispute monitor enabled but no API_URLS configured - the failsafe cannot query disputes")
 	}
@@ -79,9 +78,6 @@ func (m *Monitor) CheckBeforeStart(ctx context.Context) {
 // Run continuously monitors for open disputes using both new_dispute events and an API
 // poll, panicking on any non-ignored open dispute. No-op when disabled.
 func (m *Monitor) Run(ctx context.Context) {
-	if !m.cfg.Enabled {
-		return
-	}
 	go m.subscribeEvents(ctx)
 
 	// Immediate check, then poll. (Matches the original monitor's behavior.)
@@ -229,19 +225,18 @@ func (m *Monitor) queryDisputesFromAPI(ctx context.Context, baseURL string) ([]u
 	if err != nil {
 		return nil, err
 	}
-	var parsed struct {
-		OpenDisputes struct {
-			Ids []flexUint64 `json:"ids"`
-		} `json:"openDisputes"`
+
+	// Decode into the actual layer struct via the proto-JSON codec. This is strict
+	// (gogoproto jsonpb rejects unknown fields), so any change to the chain's response
+	// shape surfaces as an error here instead of being silently dropped.
+	var parsed disputetypes.QueryOpenDisputesResponse
+	if err := m.cdc.UnmarshalJSON(body, &parsed); err != nil {
+		return nil, fmt.Errorf("decode open-disputes response: %w", err)
 	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("unmarshal: %w", err)
+	if parsed.OpenDisputes == nil {
+		return nil, fmt.Errorf("unexpected open-disputes response: missing openDisputes field")
 	}
-	ids := make([]uint64, 0, len(parsed.OpenDisputes.Ids))
-	for _, id := range parsed.OpenDisputes.Ids {
-		ids = append(ids, uint64(id))
-	}
-	return ids, nil
+	return parsed.OpenDisputes.Ids, nil
 }
 
 func isIgnored(ignoreList []uint64, disputeID uint64) bool {
@@ -256,22 +251,6 @@ func isIgnored(ignoreList []uint64, disputeID uint64) bool {
 // ParseDisputeID converts a decimal string to uint64.
 func ParseDisputeID(val string) (uint64, error) {
 	return strconv.ParseUint(val, 10, 64)
-}
-
-// flexUint64 unmarshals a uint64 from either a JSON string (cosmos proto-JSON) or a number.
-type flexUint64 uint64
-
-func (f *flexUint64) UnmarshalJSON(b []byte) error {
-	s := strings.Trim(string(b), `"`)
-	if s == "" || s == "null" {
-		return nil
-	}
-	v, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		return err
-	}
-	*f = flexUint64(v)
-	return nil
 }
 
 // sleepCtx sleeps for d or until ctx is done; returns false if ctx was canceled.
