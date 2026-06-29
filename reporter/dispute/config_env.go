@@ -16,7 +16,7 @@ import (
 //
 // rpcEndpoints are the daemon's resolved RPC nodes, used for new_dispute event subscription.
 func LoadConfigFromEnv(rpcEndpoints []string) Config {
-	cfg := Config{CheckInterval: time.Second, RPCEndpoints: rpcEndpoints}
+	cfg := Config{CheckInterval: 30 * time.Second, RPCEndpoints: rpcEndpoints}
 
 	cfg.Enabled = isTrue(os.Getenv("DISPUTE_MONITOR_ENABLED"))
 

@@ -32,7 +32,7 @@ const (
 	ReasonOpenDisputes = "OPEN DISPUTES DETECTED - not safe to continue reporting. Add dispute IDs to DISPUTE_IGNORE_IDS if safe to ignore"
 	// disputeEventQuery matches any tx emitting a new_dispute event.
 	disputeEventQuery    = "tm.event='Tx' AND new_dispute.dispute_id EXISTS"
-	defaultCheckInterval = time.Second
+	defaultCheckInterval = 30 * time.Second
 )
 
 type Config struct {
