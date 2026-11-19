@@ -129,3 +129,10 @@ func mustEncodeQueryData(t *testing.T, queryType string) []byte {
 	require.NoError(t, err)
 	return bz
 }
+
+func TestSetNonBridgeGasAdjustment(t *testing.T) {
+	c := NewClient(log.NewNopLogger(), "0.001loya")
+	c.SetNonBridgeGasAdjustment(1.35)
+	require.Equal(t, 1.35, c.gasEstimator.currentGasAdjustment("q1"))
+	require.Equal(t, 1.75, c.gasEstimator.currentGasAdjustment(bridgeGasBucketKey))
+}
