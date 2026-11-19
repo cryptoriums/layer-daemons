@@ -226,6 +226,12 @@ func NewClient(logger log.Logger, valGasMin string) *Client {
 	}
 }
 
+// SetNonBridgeGasAdjustment sets the base gas adjustment for non-bridge txs.
+// Call before Start.
+func (c *Client) SetNonBridgeGasAdjustment(v float64) {
+	c.gasEstimator.configByKey[defaultNonBridgeBucketConfigKey].levels[0] = v
+}
+
 func (c *Client) Start(
 	ctx context.Context,
 	flags daemonflags.DaemonFlags,

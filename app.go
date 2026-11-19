@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/spf13/cast"
+	"github.com/spf13/viper"
 	"github.com/tellor-io/layer-daemons/appconfig"
 	"github.com/tellor-io/layer-daemons/configs"
 	"github.com/tellor-io/layer-daemons/constants"
@@ -171,6 +172,7 @@ func NewApp(
 	RegisterDaemonWithHealthMonitor(priceFeedClient, daemonHealthMonitor, maxDaemonUnhealthyDuration, logger)
 
 	reporterClient := reporterclient.NewClient(logger, cast.ToString(appOpts.Get("minimum-gas-prices")))
+	reporterClient.SetNonBridgeGasAdjustment(viper.GetFloat64("gas-adjustment"))
 	appInstance.ReporterClient = reporterClient
 	appInstance.wg.Add(1)
 	go func() {

@@ -43,6 +43,10 @@ var rootCmd = &cobra.Command{
 		testQueryID := viper.GetString("test-query-id")
 		prometheusPort := viper.GetInt("prometheus-port")
 		logLevelstr := viper.GetString(flags.FlagLogLevel)
+		if ga := viper.GetFloat64("gas-adjustment"); ga < 1.0 || ga >= 1.6 {
+			fmt.Printf("Error: gas-adjustment must be >= 1.0 and < 1.6, got %v\n", ga)
+			os.Exit(1)
+		}
 		configs.WriteDefaultPricefeedExchangeToml(homePath)
 		configs.WriteDefaultMarketParamsToml(homePath)
 		customquery.WriteDefaultConfigToml(homePath, "config", "custom_query_config.toml")
@@ -157,6 +161,7 @@ func init() {
 	rootCmd.Flags().Float64("price-guard-threshold", 0, "Price change threshold (0.5 = 50%, 0.01 = 1% (up to 15 decimals)) - submissions exceeding this will be blocked")
 	rootCmd.Flags().Duration("price-guard-max-age", 0, "Maximum age of stored price before treating as expired (e.g. 1m, 1h)")
 	rootCmd.Flags().Bool("price-guard-update-on-blocked", false, "Update last known price even if submission is blocked (default false)")
+	rootCmd.Flags().Float64("gas-adjustment", 1.35, "Base gas adjustment for non-bridge txs (>= 1.0 and < 1.6); escalates to 1.6 and 2.0 on out-of-gas")
 
 	// Test mode flag
 	rootCmd.Flags().Bool("test", false, "Test mode: verify price feed configurations and calculate medians without starting daemon")
